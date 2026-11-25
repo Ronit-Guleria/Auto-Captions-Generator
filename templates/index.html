@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Auto Captions Studio — Transparent Overlay &amp; Sync Generator</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo-dot"></span>
+      <h1>Auto Captions Studio</h1>
+      <span class="badge">Alpha .MOV / .WEBM Ready</span>
+    </div>
+    <div class="topbar-actions">
+      <span id="keyStatusBadge" class="status-pill">Checking API Keys...</span>
+      <button id="openSettingsBtn" class="btn btn-secondary">API Keys</button>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <!-- LEFT PANEL: INPUT & SYNC -->
+    <section class="panel left-panel">
+      <button type="button" id="toggleInputBtn" class="accordion-btn" aria-expanded="true">
+        <span>1. Input &amp; Voiceover Sync</span>
+        <span id="toggleInputIcon" class="accordion-icon">&#9660;</span>
+      </button>
+
+      <div id="inputSectionBody" class="input-section-body">
+        <div class="tabs" id="inputModeTabs">
+          <button class="tab active" data-mode="voiceover">Voiceover Only</button>
+          <button class="tab" data-mode="script">Script + Voiceover</button>
+        </div>
+
+        <div class="form-group">
+          <label for="audioFile">Upload Voiceover / Video (.mp3, .wav, .m4a, .mp4, .mov)</label>
+          <input type="file" id="audioFile" accept="audio/*,video/*" />
+        </div>
+
+        <div class="form-group hidden" id="scriptBoxGroup">
+          <label for="scriptInput">Paste Exact Script (synced 1:1 to your voiceover)</label>
+          <textarea id="scriptInput" rows="4" placeholder="Paste your exact voiceover script here..."></textarea>
+        </div>
+
+        <div class="row-2">
+          <div class="form-group">
+            <label for="engineSelect">Transcription Engine</label>
+            <select id="engineSelect">
+              <option value="auto">Auto (Cloudflare AI &rarr; Local Whisper)</option>
+              <option value="cloudflare">Cloudflare Workers AI</option>
+              <option value="local">Local Whisper (Exact Word Timings)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="chunkModeSelect">Caption Length</label>
+            <select id="chunkModeSelect">
+              <option value="three_word">3-Word Captions</option>
+              <option value="single">Single Word</option>
+              <option value="line">Line Captions</option>
+            </select>
+          </div>
+        </div>
+
+        <label class="checkbox-row">
+          <input type="checkbox" id="useGeminiCheck" checked />
+          <span>Use Gemini AI to highlight hook/emphasis words</span>
+        </label>
+
+        <button id="syncBtn" class="btn btn-primary full-width">Sync &amp; Generate Captions</button>
+      </div>
+      <div id="syncStatus" class="status-msg"></div>
+
+      <div class="segments-header">
+        <h3>Synced Captions (<span id="segCount">0</span>)</h3>
+        <span class="hint">Click a line to preview or edit text</span>
+      </div>
+      <div id="segmentsList" class="segments-list">
+        <div class="empty-state">Upload a voiceover and click Sync, or preview styles on the right.</div>
+      </div>
+    </section>
+
+    <!-- CENTER PANEL: LIVE PREVIEW -->
+    <section class="panel center-panel">
+      <div class="preview-header">
+        <h2>2. Live Transparent Preview</h2>
+        <div class="preview-controls">
+          <select id="safeZoneSelect" title="Platform Safe-Zone Overlay (Preview Only)">
+            <option value="none">Safe Zone: None</option>
+            <option value="reels">Instagram Reels UI</option>
+            <option value="shorts">YouTube Shorts UI</option>
+            <option value="tiktok">TikTok UI</option>
+            <option value="youtube">YouTube 16:9 UI</option>
+          </select>
+          <select id="aspectSelect" title="Aspect Ratio">
+            <option value="9:16">9:16 (Reels / Shorts)</option>
+            <option value="16:9">16:9 (YouTube)</option>
+            <option value="1:1">1:1 (Square)</option>
+            <option value="4:5">4:5 (IG Portrait)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="preview-stage">
+        <div id="previewFrameBox" class="preview-frame checkerboard">
+          <canvas id="previewCanvas"></canvas>
+          <div id="safeZoneOverlay" class="safe-zone-overlay hidden"></div>
+        </div>
+      </div>
+
+      <!-- TIMELINE PLAYER BAR -->
+      <div class="timeline-bar">
+        <button id="playPauseBtn" class="btn btn-primary btn-sm" title="Play / Pause Preview">&#9654; Play</button>
+        <input type="range" id="timelineSeek" min="0" max="100" step="0.01" value="0" />
+        <span id="timecodeLabel" class="timecode">00:00.0 / 00:00.0</span>
+        <audio id="previewAudio" class="hidden"></audio>
+      </div>
+
+      <div class="export-bar">
+        <div class="export-group">
+          <span class="export-label">Output Filename (optional):</span>
+          <input type="text" id="outputFilenameInput" class="filename-input" placeholder="e.g. talking_head_captions" />
+        </div>
+        <div class="export-group">
+          <span class="export-label">Subtitle Files (CapCut / Premiere / DaVinci):</span>
+          <div class="btn-row">
+            <button class="btn btn-secondary sub-export-btn" data-fmt="srt">Export .SRT</button>
+            <button class="btn btn-secondary sub-export-btn" data-fmt="ass">Export .ASS</button>
+            <button class="btn btn-secondary sub-export-btn" data-fmt="vtt">Export .VTT</button>
+          </div>
+        </div>
+        <div class="export-group">
+          <span class="export-label">Video Overlay Render:</span>
+          <button id="renderVideoBtn" class="btn btn-accent">Render Video Overlay</button>
+        </div>
+      </div>
+      <div id="exportStatus" class="status-msg"></div>
+    </section>
+
+    <!-- RIGHT PANEL: STYLES, PLACEMENT, BACKGROUND -->
+    <section class="panel right-panel">
+      <h2>3. Style &amp; Placement</h2>
+
+      <div class="form-group">
+        <label>Caption Style Presets</label>
+        <div id="styleGrid" class="style-grid"></div>
+      </div>
+
+      <div class="form-group">
+        <label for="bgModeSelect">Video Background &amp; Format</label>
+        <select id="bgModeSelect">
+          <option value="transparent_mov">Transparent (.mov ProRes 4444 — No BG)</option>
+          <option value="transparent_webm">Transparent Light (.webm VP9 Alpha)</option>
+          <option value="green_screen">Green Screen (.mp4 #00FF00)</option>
+          <option value="black_bg">Black Background (.mp4 #000000)</option>
+        </select>
+      </div>
+
+      <div class="row-2">
+        <div class="form-group">
+          <label for="vAlignSelect">Vertical Position</label>
+          <select id="vAlignSelect">
+            <option value="top">Top</option>
+            <option value="center">Center</option>
+            <option value="bottom" selected>Bottom</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="hAlignSelect">Horizontal Position</label>
+          <select id="hAlignSelect">
+            <option value="left">Left</option>
+            <option value="center" selected>Center</option>
+            <option value="right">Right</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Font Size: <span id="fontSizeVal">76</span>px</label>
+        <input type="range" id="fontSizeSlider" min="36" max="150" value="76" />
+      </div>
+
+      <div class="row-2">
+        <div class="form-group">
+          <label>X Offset: <span id="offsetXVal">0</span>%</label>
+          <input type="range" id="offsetXSlider" min="-35" max="35" value="0" />
+        </div>
+        <div class="form-group">
+          <label>Y Offset: <span id="offsetYVal">0</span>%</label>
+          <input type="range" id="offsetYSlider" min="-35" max="35" value="0" />
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- API SETTINGS MODAL -->
+  <div id="settingsModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>API Keys Configuration</h3>
+        <button id="closeSettingsBtn" class="btn-icon">&times;</button>
+      </div>
+      <p class="hint">Keys are saved locally to <code>.env</code> in your project folder.</p>
+      <div class="form-group">
+        <label for="geminiKeyInput">Gemini API Key</label>
+        <input type="password" id="geminiKeyInput" placeholder="AIza..." />
+      </div>
+      <div class="form-group">
+        <label for="cfAccountInput">Cloudflare Account ID</label>
+        <input type="text" id="cfAccountInput" placeholder="32-char Cloudflare Account ID" />
+      </div>
+      <div class="form-group">
+        <label for="cfTokenInput">Cloudflare Workers AI API Token</label>
+        <input type="password" id="cfTokenInput" placeholder="Bearer token..." />
+      </div>
+      <button id="saveSettingsBtn" class="btn btn-primary full-width">Save Keys</button>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,714 @@
+const ASPECT_DIMS = {
+  "9:16": [1080, 1920],
+  "16:9": [1920, 1080],
+  "1:1": [1080, 1080],
+  "4:5": [1080, 1350],
+};
+
+const DEMO_SEGMENTS = [
+  {
+    id: 1,
+    start: 0.0,
+    end: 2.0,
+    text: "Just like this",
+    words: [
+      { word: "Just", start: 0.0, end: 0.5 },
+      { word: "like", start: 0.5, end: 1.0 },
+      { word: "this", start: 1.0, end: 2.0 },
+    ],
+    emphasis_index: 2,
+  },
+];
+
+const state = {
+  inputMode: "voiceover",
+  jobId: null,
+  duration: 2.0,
+  words: [],
+  segments: [],
+  selectedSegIdx: 0,
+  styleId: "purple_pill",
+  styles: {},
+  isPlaying: false,
+  currentTime: 0,
+};
+
+const els = {
+  keyStatusBadge: document.getElementById("keyStatusBadge"),
+  openSettingsBtn: document.getElementById("openSettingsBtn"),
+  closeSettingsBtn: document.getElementById("closeSettingsBtn"),
+  saveSettingsBtn: document.getElementById("saveSettingsBtn"),
+  settingsModal: document.getElementById("settingsModal"),
+  geminiKeyInput: document.getElementById("geminiKeyInput"),
+  cfAccountInput: document.getElementById("cfAccountInput"),
+  cfTokenInput: document.getElementById("cfTokenInput"),
+
+  toggleInputBtn: document.getElementById("toggleInputBtn"),
+  toggleInputIcon: document.getElementById("toggleInputIcon"),
+  inputSectionBody: document.getElementById("inputSectionBody"),
+
+  inputModeTabs: document.getElementById("inputModeTabs"),
+  scriptBoxGroup: document.getElementById("scriptBoxGroup"),
+  audioFile: document.getElementById("audioFile"),
+  scriptInput: document.getElementById("scriptInput"),
+  engineSelect: document.getElementById("engineSelect"),
+  chunkModeSelect: document.getElementById("chunkModeSelect"),
+  useGeminiCheck: document.getElementById("useGeminiCheck"),
+  syncBtn: document.getElementById("syncBtn"),
+  syncStatus: document.getElementById("syncStatus"),
+
+  segCount: document.getElementById("segCount"),
+  segmentsList: document.getElementById("segmentsList"),
+
+  safeZoneSelect: document.getElementById("safeZoneSelect"),
+  aspectSelect: document.getElementById("aspectSelect"),
+  bgModeSelect: document.getElementById("bgModeSelect"),
+  vAlignSelect: document.getElementById("vAlignSelect"),
+  hAlignSelect: document.getElementById("hAlignSelect"),
+  fontSizeSlider: document.getElementById("fontSizeSlider"),
+  fontSizeVal: document.getElementById("fontSizeVal"),
+  offsetXSlider: document.getElementById("offsetXSlider"),
+  offsetXVal: document.getElementById("offsetXVal"),
+  offsetYSlider: document.getElementById("offsetYSlider"),
+  offsetYVal: document.getElementById("offsetYVal"),
+
+  styleGrid: document.getElementById("styleGrid"),
+  previewStage: document.querySelector(".preview-stage"),
+  previewFrameBox: document.getElementById("previewFrameBox"),
+  previewCanvas: document.getElementById("previewCanvas"),
+  safeZoneOverlay: document.getElementById("safeZoneOverlay"),
+
+  playPauseBtn: document.getElementById("playPauseBtn"),
+  timelineSeek: document.getElementById("timelineSeek"),
+  timecodeLabel: document.getElementById("timecodeLabel"),
+  previewAudio: document.getElementById("previewAudio"),
+
+  outputFilenameInput: document.getElementById("outputFilenameInput"),
+  renderVideoBtn: document.getElementById("renderVideoBtn"),
+  exportStatus: document.getElementById("exportStatus"),
+};
+
+let rafId = null;
+
+async function init() {
+  const res = await fetch("/api/config");
+  const cfg = await res.json();
+  cfg.styles.forEach((s) => {
+    state.styles[s.id] = s;
+  });
+  updateKeyBadge(cfg.keys_configured);
+  renderStyleGrid();
+  bindEvents();
+  fitPreviewBox();
+  drawCanvasAtTime(0);
+
+  if (typeof ResizeObserver !== "undefined") {
+    new ResizeObserver(() => {
+      fitPreviewBox();
+      drawCanvasAtTime(state.currentTime);
+    }).observe(els.previewStage);
+  }
+}
+
+function updateKeyBadge(keys) {
+  const g = keys.gemini ? "Gemini OK" : "No Gemini";
+  const c = keys.cloudflare ? "CF AI OK" : "Local Whisper";
+  els.keyStatusBadge.textContent = `${g} • ${c}`;
+}
+
+function renderStyleGrid() {
+  els.styleGrid.innerHTML = "";
+  Object.values(state.styles).forEach((st) => {
+    const card = document.createElement("div");
+    card.className = `style-card ${st.id === state.styleId ? "active" : ""}`;
+    card.innerHTML = `
+      <div class="style-card-title">${st.name}</div>
+      <div class="style-card-desc">${st.description}</div>
+    `;
+    card.addEventListener("click", () => {
+      state.styleId = st.id;
+      renderStyleGrid();
+      drawCanvasAtTime(state.currentTime);
+    });
+    els.styleGrid.appendChild(card);
+  });
+}
+
+function setInputCollapsed(collapsed) {
+  els.inputSectionBody.classList.toggle("hidden", collapsed);
+  els.toggleInputBtn.setAttribute("aria-expanded", String(!collapsed));
+  els.toggleInputIcon.innerHTML = collapsed ? "&#9654;" : "&#9660;";
+}
+
+function bindEvents() {
+  window.addEventListener("resize", () => {
+    fitPreviewBox();
+    drawCanvasAtTime(state.currentTime);
+  });
+
+  els.toggleInputBtn.addEventListener("click", () => {
+    const isHidden = els.inputSectionBody.classList.contains("hidden");
+    setInputCollapsed(!isHidden);
+  });
+
+  els.inputModeTabs.querySelectorAll(".tab").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      els.inputModeTabs.querySelectorAll(".tab").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      state.inputMode = btn.dataset.mode;
+      els.scriptBoxGroup.classList.toggle("hidden", state.inputMode !== "script");
+    });
+  });
+
+  els.openSettingsBtn.addEventListener("click", () => els.settingsModal.classList.remove("hidden"));
+  els.closeSettingsBtn.addEventListener("click", () => els.settingsModal.classList.add("hidden"));
+  els.saveSettingsBtn.addEventListener("click", async () => {
+    const res = await fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        gemini_api_key: els.geminiKeyInput.value,
+        cf_account_id: els.cfAccountInput.value,
+        cf_api_token: els.cfTokenInput.value,
+      }),
+    });
+    const data = await res.json();
+    updateKeyBadge({
+      gemini: data.configured.GEMINI_API_KEY,
+      cloudflare: data.configured.CF_ACCOUNT_ID && data.configured.CF_API_TOKEN,
+    });
+    els.settingsModal.classList.add("hidden");
+  });
+
+  els.syncBtn.addEventListener("click", handleSync);
+
+  els.chunkModeSelect.addEventListener("change", async () => {
+    if (!state.words.length) return;
+    const res = await fetch("/api/regroup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        words: state.words,
+        chunk_mode: els.chunkModeSelect.value,
+        use_gemini: els.useGeminiCheck.checked,
+      }),
+    });
+    const data = await res.json();
+    state.segments = data.segments || [];
+    state.selectedSegIdx = 0;
+    renderSegmentsList();
+    drawCanvasAtTime(state.currentTime);
+  });
+
+  els.aspectSelect.addEventListener("change", () => {
+    fitPreviewBox();
+    drawCanvasAtTime(state.currentTime);
+  });
+
+  els.safeZoneSelect.addEventListener("change", renderSafeZoneOverlay);
+
+  [els.bgModeSelect, els.vAlignSelect, els.hAlignSelect].forEach((el) =>
+    el.addEventListener("change", () => drawCanvasAtTime(state.currentTime))
+  );
+
+  els.fontSizeSlider.addEventListener("input", () => {
+    els.fontSizeVal.textContent = els.fontSizeSlider.value;
+    drawCanvasAtTime(state.currentTime);
+  });
+  els.offsetXSlider.addEventListener("input", () => {
+    els.offsetXVal.textContent = els.offsetXSlider.value;
+    drawCanvasAtTime(state.currentTime);
+  });
+  els.offsetYSlider.addEventListener("input", () => {
+    els.offsetYVal.textContent = els.offsetYSlider.value;
+    drawCanvasAtTime(state.currentTime);
+  });
+
+  // Timeline & Audio Playback
+  els.playPauseBtn.addEventListener("click", togglePlayPause);
+  els.timelineSeek.addEventListener("input", () => {
+    const t = Number(els.timelineSeek.value);
+    state.currentTime = t;
+    if (els.previewAudio.src) {
+      els.previewAudio.currentTime = t;
+    }
+    updateTimecodeUI(t);
+    drawCanvasAtTime(t);
+  });
+
+  els.previewAudio.addEventListener("ended", () => {
+    state.isPlaying = false;
+    els.playPauseBtn.innerHTML = "&#9654; Play";
+    cancelAnimationFrame(rafId);
+  });
+
+  document.querySelectorAll(".sub-export-btn").forEach((btn) => {
+    btn.addEventListener("click", () => handleSubtitleExport(btn.dataset.fmt));
+  });
+  els.renderVideoBtn.addEventListener("click", handleRenderVideo);
+}
+
+function fitPreviewBox() {
+  const [w, h] = ASPECT_DIMS[els.aspectSelect.value] || [1080, 1920];
+  const stageRect = els.previewStage.getBoundingClientRect();
+  const availW = Math.max(180, stageRect.width - 24);
+  const availH = Math.max(180, stageRect.height - 24);
+  const scale = Math.min(availW / w, availH / h);
+
+  els.previewFrameBox.style.width = `${Math.floor(w * scale)}px`;
+  els.previewFrameBox.style.height = `${Math.floor(h * scale)}px`;
+  els.previewCanvas.width = w;
+  els.previewCanvas.height = h;
+}
+
+function renderSafeZoneOverlay() {
+  const mode = els.safeZoneSelect.value;
+  const ov = els.safeZoneOverlay;
+  if (mode === "none") {
+    ov.classList.add("hidden");
+    ov.innerHTML = "";
+    return;
+  }
+  ov.classList.remove("hidden");
+
+  if (mode === "reels" || mode === "shorts" || mode === "tiktok") {
+    const label =
+      mode === "reels"
+        ? "IG REELS SAFE ZONE (PREVIEW ONLY)"
+        : mode === "shorts"
+        ? "YT SHORTS SAFE ZONE (PREVIEW ONLY)"
+        : "TIKTOK SAFE ZONE (PREVIEW ONLY)";
+    const user = mode === "shorts" ? "@YourChannel" : "@yourhandle";
+    ov.innerHTML = `
+      <div class="sz-tag">${label}</div>
+      <div class="sz-right-icons">
+        <div class="sz-icon-circle">&#9829;</div>
+        <div class="sz-icon-circle">&#128172;</div>
+        <div class="sz-icon-circle">&#10148;</div>
+        <div class="sz-icon-circle">&#8942;</div>
+      </div>
+      <div class="sz-bottom-meta">
+        <div class="sz-user">${user}</div>
+        <div class="sz-desc">Video caption &amp; audio title area — avoid placing captions here</div>
+      </div>
+    `;
+  } else if (mode === "youtube") {
+    ov.innerHTML = `
+      <div class="sz-tag">YOUTUBE 16:9 PLAYER (PREVIEW ONLY)</div>
+      <div class="sz-yt-bar">
+        <div class="sz-yt-progress"></div>
+        <div style="display:flex;justify-content:space-between;font-size:10px;">
+          <span>&#9654; 0:42 / 3:15</span>
+          <span>CC &nbsp; &#9881; &nbsp; &#9974;</span>
+        </div>
+      </div>
+    `;
+  }
+}
+
+function togglePlayPause() {
+  if (!state.segments.length && !els.previewAudio.src) {
+    state.duration = 2.0;
+    els.timelineSeek.max = 2.0;
+  }
+
+  if (state.isPlaying) {
+    state.isPlaying = false;
+    els.playPauseBtn.innerHTML = "&#9654; Play";
+    if (els.previewAudio.src) els.previewAudio.pause();
+    cancelAnimationFrame(rafId);
+  } else {
+    state.isPlaying = true;
+    els.playPauseBtn.innerHTML = "&#10074;&#10074; Pause";
+    if (els.previewAudio.src) {
+      if (els.previewAudio.currentTime >= state.duration) {
+        els.previewAudio.currentTime = 0;
+      }
+      els.previewAudio.play();
+      tickPlayback();
+    } else {
+      let lastTs = performance.now();
+      const demoLoop = (now) => {
+        if (!state.isPlaying) return;
+        const dt = (now - lastTs) / 1000;
+        lastTs = now;
+        state.currentTime += dt;
+        if (state.currentTime > state.duration) state.currentTime = 0;
+        els.timelineSeek.value = state.currentTime;
+        updateTimecodeUI(state.currentTime);
+        drawCanvasAtTime(state.currentTime);
+        rafId = requestAnimationFrame(demoLoop);
+      };
+      rafId = requestAnimationFrame(demoLoop);
+    }
+  }
+}
+
+function tickPlayback() {
+  if (!state.isPlaying) return;
+  const t = els.previewAudio.currentTime;
+  state.currentTime = t;
+  els.timelineSeek.value = t;
+  updateTimecodeUI(t);
+  drawCanvasAtTime(t);
+  rafId = requestAnimationFrame(tickPlayback);
+}
+
+function fmtTime(sec) {
+  const m = Math.floor(sec / 60);
+  const s = (sec % 60).toFixed(1).padStart(4, "0");
+  return `${String(m).padStart(2, "0")}:${s}`;
+}
+
+function updateTimecodeUI(t) {
+  els.timecodeLabel.textContent = `${fmtTime(t)} / ${fmtTime(state.duration)}`;
+}
+
+async function handleSync() {
+  const file = els.audioFile.files[0];
+  if (!file) {
+    els.syncStatus.textContent = "Please choose an audio or video file first.";
+    return;
+  }
+
+  const form = new FormData();
+  form.append("file", file);
+  form.append("engine", els.engineSelect.value);
+  form.append("chunk_mode", els.chunkModeSelect.value);
+  form.append("use_gemini", els.useGeminiCheck.checked ? "true" : "false");
+  if (state.inputMode === "script") {
+    form.append("script", els.scriptInput.value || "");
+  }
+
+  els.syncBtn.disabled = true;
+  els.syncStatus.textContent = "Transcribing & syncing voiceover...";
+
+  try {
+    const res = await fetch("/api/transcribe", { method: "POST", body: form });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Sync failed");
+
+    state.jobId = data.job_id;
+    state.duration = data.duration;
+    state.words = data.words;
+    state.segments = data.segments;
+    state.selectedSegIdx = 0;
+    state.currentTime = 0;
+
+    els.previewAudio.src = `/api/audio/${data.job_id}`;
+    els.timelineSeek.max = data.duration;
+    els.timelineSeek.value = 0;
+    updateTimecodeUI(0);
+
+    els.syncStatus.textContent = `Synced ${data.segments.length} captions (${data.duration}s) via ${data.engine}`;
+    renderSegmentsList();
+    setInputCollapsed(true);
+    drawCanvasAtTime(0);
+  } catch (err) {
+    els.syncStatus.textContent = `Error: ${err.message}`;
+  } finally {
+    els.syncBtn.disabled = false;
+  }
+}
+
+function renderSegmentsList() {
+  els.segCount.textContent = state.segments.length;
+  if (!state.segments.length) {
+    els.segmentsList.innerHTML = '<div class="empty-state">No captions yet.</div>';
+    return;
+  }
+
+  els.segmentsList.innerHTML = "";
+  state.segments.forEach((seg, idx) => {
+    const div = document.createElement("div");
+    div.className = `seg-item ${idx === state.selectedSegIdx ? "active" : ""}`;
+    div.innerHTML = `
+      <div class="seg-time">#${seg.id} &bull; ${seg.start.toFixed(2)}s &rarr; ${seg.end.toFixed(2)}s</div>
+      <input class="seg-text-input" type="text" value="${seg.text.replace(/"/g, "&quot;")}" />
+    `;
+    div.addEventListener("click", () => {
+      state.selectedSegIdx = idx;
+      state.currentTime = seg.start + 0.01;
+      els.timelineSeek.value = state.currentTime;
+      if (els.previewAudio.src) els.previewAudio.currentTime = state.currentTime;
+      updateTimecodeUI(state.currentTime);
+      document.querySelectorAll(".seg-item").forEach((el, i) => el.classList.toggle("active", i === idx));
+      drawCanvasAtTime(state.currentTime);
+    });
+
+    const inp = div.querySelector("input");
+    inp.addEventListener("change", () => {
+      const newTokens = inp.value.trim().split(/\s+/).filter(Boolean);
+      if (!newTokens.length) return;
+      seg.text = newTokens.join(" ");
+      const span = Math.max(0.1, seg.end - seg.start);
+      const step = span / newTokens.length;
+      seg.words = newTokens.map((tok, i) => ({
+        word: tok,
+        start: Number((seg.start + i * step).toFixed(3)),
+        end: Number((seg.start + (i + 1) * step).toFixed(3)),
+      }));
+      seg.emphasis_index = Math.min(seg.emphasis_index || 0, newTokens.length - 1);
+      drawCanvasAtTime(state.currentTime);
+    });
+
+    els.segmentsList.appendChild(div);
+  });
+}
+
+function getFontCss(role, sizePx) {
+  if (role === "condensed") return `900 ${sizePx}px Impact, "Arial Narrow", sans-serif`;
+  if (role === "serif_italic") return `italic 700 ${sizePx}px Georgia, "Times New Roman", serif`;
+  if (role === "serif_bold") return `700 ${sizePx}px Georgia, "Times New Roman", serif`;
+  return `800 ${sizePx}px "Segoe UI", Arial, sans-serif`;
+}
+
+function roundRectPath(ctx, x, y, w, h, r) {
+  const rad = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + rad, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rad);
+  ctx.arcTo(x + w, y + h, x, y + h, rad);
+  ctx.arcTo(x, y + h, x, y, rad);
+  ctx.arcTo(x, y, x + w, y, rad);
+  ctx.closePath();
+}
+
+function drawCanvasAtTime(t) {
+  const canvas = els.previewCanvas;
+  const ctx = canvas.getContext("2d");
+  const W = canvas.width;
+  const H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+
+  const bgMode = els.bgModeSelect.value;
+  if (bgMode === "green_screen") {
+    ctx.fillStyle = "#00FF00";
+    ctx.fillRect(0, 0, W, H);
+  } else if (bgMode === "black_bg") {
+    ctx.fillStyle = "#000000";
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  const segList = state.segments.length ? state.segments : DEMO_SEGMENTS;
+  let seg = null;
+  let activeWordIdx = -1;
+  for (const s of segList) {
+    if (t >= s.start && t <= s.end) {
+      seg = s;
+      const words = s.words || [];
+      for (let i = 0; i < words.length; i++) {
+        if (t >= words[i].start && t <= words[i].end) {
+          activeWordIdx = i;
+          break;
+        }
+      }
+      if (activeWordIdx === -1 && words.length) {
+        for (let i = 0; i < words.length; i++) {
+          if (t >= words[i].start) activeWordIdx = i;
+        }
+      }
+      break;
+    }
+  }
+  if (!seg || !seg.words || !seg.words.length) return;
+
+  const style = state.styles[state.styleId] || Object.values(state.styles)[0];
+  if (!style) return;
+
+  const fontSize = Number(els.fontSizeSlider.value);
+  const vAlign = els.vAlignSelect.value;
+  const hAlign = els.hAlignSelect.value;
+  const offX = (Number(els.offsetXSlider.value) / 100) * W;
+  const offY = (Number(els.offsetYSlider.value) / 100) * H;
+  const empIdx = seg.emphasis_index ?? 0;
+  const highlightIdx =
+    style.mode_type === "word_pill" && activeWordIdx >= 0 ? activeWordIdx : empIdx;
+
+  const words = seg.words;
+  const texts = words.map((w) => (style.uppercase ? w.word.toUpperCase() : w.word));
+  const fonts = words.map((_, i) =>
+    i === highlightIdx && style.accent_font_role !== style.font_role
+      ? getFontCss(style.accent_font_role, Math.round(fontSize * 1.06))
+      : getFontCss(style.font_role, fontSize)
+  );
+
+  const spacePx = Math.max(12, Math.round(fontSize * 0.28));
+  const maxTextW = W * 0.84;
+
+  const lines = [];
+  let curLine = [];
+  let curLineW = 0;
+  texts.forEach((txt, i) => {
+    ctx.font = fonts[i];
+    const ww = ctx.measureText(txt).width;
+    const added = curLine.length ? spacePx + ww : ww;
+    if (curLine.length && curLineW + added > maxTextW) {
+      lines.push(curLine);
+      curLine = [{ i, txt, ww, font: fonts[i] }];
+      curLineW = ww;
+    } else {
+      curLine.push({ i, txt, ww, font: fonts[i] });
+      curLineW += added;
+    }
+  });
+  if (curLine.length) lines.push(curLine);
+
+  const lineH = fontSize * 1.05;
+  const lineGap = fontSize * 0.28;
+  const totalH = lines.length * lineH + Math.max(0, lines.length - 1) * lineGap;
+  const lineWidths = lines.map(
+    (ln) => ln.reduce((acc, item) => acc + item.ww, 0) + spacePx * Math.max(0, ln.length - 1)
+  );
+  const maxLW = Math.max(...lineWidths, 0);
+
+  let baseY;
+  if (vAlign === "top") baseY = H * 0.12;
+  else if (vAlign === "center") baseY = (H - totalH) / 2;
+  else baseY = H * 0.80 - totalH / 2;
+  baseY += offY;
+
+  const marginX = W * 0.08;
+  const getLineX = (lw) => {
+    if (hAlign === "left") return marginX + offX;
+    if (hAlign === "right") return W - marginX - lw + offX;
+    return (W - lw) / 2 + offX;
+  };
+
+  if (style.mode_type === "stacked_bg" && highlightIdx >= 0 && highlightIdx < texts.length) {
+    const bgWord = texts[highlightIdx];
+    const bigSize = Math.round(fontSize * 2.15);
+    ctx.font = getFontCss(style.accent_font_role, bigSize);
+    const bw = ctx.measureText(bgWord).width;
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = style.accent_color;
+    ctx.globalAlpha = 0.9;
+    ctx.fillText(bgWord, getLineX(bw), baseY + lineH * 0.35);
+    ctx.globalAlpha = 1.0;
+  }
+
+  if (style.mode_type === "full_box" && style.pill_color) {
+    const padX = fontSize * 0.42;
+    const padY = fontSize * 0.22;
+    const bx = getLineX(maxLW) - padX;
+    ctx.fillStyle = style.pill_color;
+    roundRectPath(ctx, bx, baseY - padY, maxLW + padX * 2, totalH + padY * 2, fontSize * 0.3);
+    ctx.fill();
+  }
+
+  ctx.textBaseline = "middle";
+  let curY = baseY + lineH / 2;
+
+  lines.forEach((ln, lIdx) => {
+    let curX = getLineX(lineWidths[lIdx]);
+    ln.forEach(({ i, txt, ww, font }) => {
+      const isHl = i === highlightIdx;
+      ctx.font = font;
+
+      if (style.mode_type === "word_pill" && isHl && style.pill_color) {
+        const padX = fontSize * 0.24;
+        const padY = fontSize * 0.16;
+        ctx.fillStyle = style.pill_color;
+        roundRectPath(
+          ctx,
+          curX - padX,
+          curY - lineH / 2 - padY,
+          ww + padX * 2,
+          lineH + padY * 2,
+          fontSize * 0.28
+        );
+        ctx.fill();
+      }
+
+      if (style.shadow) {
+        const sh = Math.max(2, fontSize * 0.05);
+        ctx.fillStyle = "rgba(0,0,0,0.6)";
+        ctx.fillText(txt, curX + sh, curY + sh);
+      }
+
+      if (style.outline_width > 0) {
+        ctx.lineWidth = style.outline_width * 2;
+        ctx.strokeStyle = style.outline_color;
+        ctx.lineJoin = "round";
+        ctx.strokeText(txt, curX, curY);
+      }
+
+      ctx.fillStyle =
+        isHl && style.mode_type !== "stacked_bg" ? style.accent_color : style.text_color;
+      ctx.fillText(txt, curX, curY);
+
+      curX += ww + spacePx;
+    });
+    curY += lineH + lineGap;
+  });
+}
+
+async function handleSubtitleExport(fmt) {
+  if (!state.segments.length) {
+    els.exportStatus.textContent = "Please sync a voiceover first.";
+    return;
+  }
+  els.exportStatus.textContent = `Generating .${fmt.toUpperCase()}...`;
+  const res = await fetch("/api/export-subtitles", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      job_id: state.jobId || "demo",
+      output_name: els.outputFilenameInput.value,
+      format: fmt,
+      segments: state.segments,
+      style_id: state.styleId,
+      aspect_ratio: els.aspectSelect.value,
+      v_align: els.vAlignSelect.value,
+      h_align: els.hAlignSelect.value,
+      font_size: Number(els.fontSizeSlider.value),
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    els.exportStatus.textContent = `Error: ${data.error}`;
+    return;
+  }
+  els.exportStatus.innerHTML = `Ready: <a href="${data.download_url}" download="${data.filename}">${data.filename}</a>`;
+}
+
+async function handleRenderVideo() {
+  if (!state.jobId || !state.segments.length) {
+    els.exportStatus.textContent = "Please upload & sync a voiceover first.";
+    return;
+  }
+
+  els.renderVideoBtn.disabled = true;
+  els.exportStatus.textContent = "Rendering transparent/styled video with FFmpeg (this may take a moment)...";
+
+  try {
+    const res = await fetch("/api/render-video", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        job_id: state.jobId,
+        output_name: els.outputFilenameInput.value,
+        duration: state.duration,
+        segments: state.segments,
+        style_id: state.styleId,
+        aspect_ratio: els.aspectSelect.value,
+        bg_mode: els.bgModeSelect.value,
+        v_align: els.vAlignSelect.value,
+        h_align: els.hAlignSelect.value,
+        font_size: Number(els.fontSizeSlider.value),
+        offset_x_pct: Number(els.offsetXSlider.value),
+        offset_y_pct: Number(els.offsetYSlider.value),
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Render failed");
+
+    els.exportStatus.innerHTML = `Video Ready: <a href="${data.download_url}" download="${data.filename}">${data.filename}</a>`;
+  } catch (err) {
+    els.exportStatus.textContent = `Render Error: ${err.message}`;
+  } finally {
+    els.renderVideoBtn.disabled = false;
+  }
+}
+
+init();
