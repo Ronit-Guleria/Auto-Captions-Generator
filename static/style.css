@@ -337,6 +337,24 @@ textarea {
   font-size: 12px;
 }
 
+.preview-fs-container {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.preview-fs-container:fullscreen,
+.preview-fs-container.is-fullscreen-fallback {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: #090a0e;
+  padding: 12px;
+  width: 100vw;
+  height: 100vh;
+}
+
 .preview-stage {
   flex: 1;
   min-height: 0;
@@ -351,22 +369,16 @@ textarea {
 
 .preview-frame {
   position: relative;
-  max-width: 100%;
-  max-height: 100%;
+  flex-shrink: 0;
   border: 1px solid #2e3547;
   border-radius: 8px;
   overflow: hidden;
-  display: flex;
-  align-items: center;
-  justify-content: center;
 }
 
 .preview-frame canvas {
   display: block;
-  max-width: 100%;
-  max-height: 100%;
-  width: auto;
-  height: auto;
+  width: 100%;
+  height: 100%;
 }
 
 /* Timeline Player Bar */
@@ -643,6 +655,12 @@ textarea {
     height: 52vh;
     min-height: 300px;
     max-height: 500px;
+  }
+  .preview-fs-container:fullscreen .preview-stage,
+  .preview-fs-container.is-fullscreen-fallback .preview-stage {
+    height: auto;
+    max-height: none;
+    flex: 1;
   }
 }
 

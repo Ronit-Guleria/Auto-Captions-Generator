@@ -1,5 +1,4 @@
 """RGBA Pillow caption renderer + FFmpeg alpha-channel video encoder (.mov, .webm, .mp4)."""
-
 from __future__ import annotations
 
 import subprocess
@@ -68,7 +67,7 @@ def render_caption_frame(
     segment: Optional[Dict[str, Any]],
     active_word_idx: int,
     style_id: str = "purple_pill",
-    v_align: str = "bottom",
+    v_align: str = "center",
     h_align: str = "center",
     font_size: int = 72,
     offset_x_pct: float = 0.0,
@@ -138,8 +137,8 @@ def render_caption_frame(
         base_y = int(height * 0.12)
     elif v_align == "center":
         base_y = int((height - total_h) / 2)
-    else:  # bottom
-        base_y = int(height * 0.80 - total_h / 2)
+    else:  # bottom (above Reels/Shorts UI)
+        base_y = int(height * 0.72 - total_h / 2)
     base_y += int((offset_y_pct / 100.0) * height)
 
     # Anchor X helper per line

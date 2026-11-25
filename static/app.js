@@ -78,6 +78,8 @@ const els = {
   previewCanvas: document.getElementById("previewCanvas"),
   safeZoneOverlay: document.getElementById("safeZoneOverlay"),
 
+  previewFullscreenContainer: document.getElementById("previewFullscreenContainer"),
+  fullscreenBtn: document.getElementById("fullscreenBtn"),
   playPauseBtn: document.getElementById("playPauseBtn"),
   timelineSeek: document.getElementById("timelineSeek"),
   timecodeLabel: document.getElementById("timecodeLabel"),
@@ -240,6 +242,56 @@ function bindEvents() {
     state.isPlaying = false;
     els.playPauseBtn.innerHTML = "&#9654; Play";
     cancelAnimationFrame(rafId);
+  });
+
+  // Fullscreen Preview (native Fullscreen API + CSS fallback for iOS)
+  const syncFullscreenUI = () => {
+    const active =
+      document.fullscreenElement === els.previewFullscreenContainer ||
+      els.previewFullscreenContainer.classList.contains("is-fullscreen-fallback");
+    els.fullscreenBtn.innerHTML = active ? "&#x2715; Exit" : "&#x26F6; Fullscreen";
+    setTimeout(() => {
+      fitPreviewBox();
+      drawCanvasAtTime(state.currentTime);
+    }, 50);
+  };
+
+  els.fullscreenBtn.addEventListener("click", async () => {
+    els.fullscreenBtn.blur();
+    const box = els.previewFullscreenContainer;
+    if (document.fullscreenElement === box) {
+      await document.exitFullscreen();
+    } else if (box.classList.contains("is-fullscreen-fallback")) {
+      box.classList.remove("is-fullscreen-fallback");
+      syncFullscreenUI();
+    } else if (box.requestFullscreen) {
+      try {
+        await box.requestFullscreen();
+      } catch {
+        box.classList.add("is-fullscreen-fallback");
+        syncFullscreenUI();
+      }
+    } else {
+      box.classList.add("is-fullscreen-fallback");
+      syncFullscreenUI();
+    }
+  });
+
+  document.addEventListener("fullscreenchange", syncFullscreenUI);
+
+  document.addEventListener("keydown", (e) => {
+    const tag = (e.target && e.target.tagName) ? e.target.tagName.toUpperCase() : "";
+    const isTyping = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+    if (e.code === "Space" && !isTyping) {
+      e.preventDefault();
+      if (document.activeElement && typeof document.activeElement.blur === "function") {
+        document.activeElement.blur();
+      }
+      togglePlayPause();
+    } else if (e.code === "Escape" && els.previewFullscreenContainer.classList.contains("is-fullscreen-fallback")) {
+      els.previewFullscreenContainer.classList.remove("is-fullscreen-fallback");
+      syncFullscreenUI();
+    }
   });
 
   document.querySelectorAll(".sub-export-btn").forEach((btn) => {
@@ -573,7 +625,7 @@ function drawCanvasAtTime(t) {
   let baseY;
   if (vAlign === "top") baseY = H * 0.12;
   else if (vAlign === "center") baseY = (H - totalH) / 2;
-  else baseY = H * 0.80 - totalH / 2;
+  else baseY = H * 0.72 - totalH / 2;
   baseY += offY;
 
   const marginX = W * 0.08;

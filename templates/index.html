@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Auto Captions Studio — Transparent Overlay &amp; Sync Generator</title>
-  <link rel="stylesheet" href="/static/style.css?v=3" />
+  <link rel="stylesheet" href="/static/style.css?v=5" />
 </head>
 <body>
   <header class="topbar">
@@ -101,19 +101,22 @@
         </div>
       </div>
 
-      <div class="preview-stage">
-        <div id="previewFrameBox" class="preview-frame checkerboard">
-          <canvas id="previewCanvas"></canvas>
-          <div id="safeZoneOverlay" class="safe-zone-overlay hidden"></div>
+      <div id="previewFullscreenContainer" class="preview-fs-container">
+        <div class="preview-stage">
+          <div id="previewFrameBox" class="preview-frame checkerboard">
+            <canvas id="previewCanvas"></canvas>
+            <div id="safeZoneOverlay" class="safe-zone-overlay hidden"></div>
+          </div>
         </div>
-      </div>
 
-      <!-- TIMELINE PLAYER BAR -->
-      <div class="timeline-bar">
-        <button id="playPauseBtn" class="btn btn-primary btn-sm" title="Play / Pause Preview">&#9654; Play</button>
-        <input type="range" id="timelineSeek" min="0" max="100" step="0.01" value="0" />
-        <span id="timecodeLabel" class="timecode">00:00.0 / 00:00.0</span>
-        <audio id="previewAudio" class="hidden"></audio>
+        <!-- TIMELINE PLAYER BAR -->
+        <div class="timeline-bar">
+          <button id="playPauseBtn" class="btn btn-primary btn-sm" title="Play / Pause Preview">&#9654; Play</button>
+          <input type="range" id="timelineSeek" min="0" max="100" step="0.01" value="0" />
+          <span id="timecodeLabel" class="timecode">00:00.0 / 00:00.0</span>
+          <button id="fullscreenBtn" class="btn btn-secondary btn-sm" title="Fullscreen Preview">&#x26F6; Fullscreen</button>
+          <audio id="previewAudio" class="hidden"></audio>
+        </div>
       </div>
 
       <div class="export-bar">
@@ -161,8 +164,8 @@
           <label for="vAlignSelect">Vertical Position</label>
           <select id="vAlignSelect">
             <option value="top">Top</option>
-            <option value="center">Center</option>
-            <option value="bottom" selected>Bottom</option>
+            <option value="center" selected>Center</option>
+            <option value="bottom">Bottom</option>
           </select>
         </div>
         <div class="form-group">
@@ -217,6 +220,6 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=3"></script>
+  <script src="/static/app.js?v=6"></script>
 </body>
 </html>

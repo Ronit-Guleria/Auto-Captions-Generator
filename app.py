@@ -31,6 +31,7 @@ from transcriber import extract_wav_16k, transcribe_and_align
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 500 * 1024 * 1024  # 500 MB max upload
+app.config["TEMPLATES_AUTO_RELOAD"] = True
 
 
 @app.route("/")
