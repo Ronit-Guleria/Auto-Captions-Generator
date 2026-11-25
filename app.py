@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import importlib.util
 import io
 import os
 import re
@@ -27,7 +28,7 @@ from styler import (
     enhance_emphasis_with_gemini,
     group_words_into_segments,
 )
-from transcriber import extract_wav_16k, transcribe_and_align
+from transcriber import GeminiRetryableError, extract_wav_16k, transcribe_and_align
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 500 * 1024 * 1024  # 500 MB max upload
@@ -99,6 +100,17 @@ def api_transcribe():
                 "words": result["words"],
                 "segments": segments,
             }
+        )
+    except GeminiRetryableError as exc:
+        return (
+            jsonify(
+                {
+                    "error": str(exc),
+                    "can_retry": True,
+                    "has_local_whisper": importlib.util.find_spec("faster_whisper") is not None,
+                }
+            ),
+            503,
         )
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500

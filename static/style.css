@@ -202,6 +202,28 @@ textarea {
   font-family: inherit;
 }
 
+.file-input-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.file-input-row input[type="file"] {
+  flex: 1;
+  min-width: 0;
+}
+
+.btn-icon-clear {
+  padding: 7px 11px;
+  font-size: 16px;
+  line-height: 1;
+  flex-shrink: 0;
+  color: #f87171;
+}
+.btn-icon-clear:hover {
+  background: rgba(239, 68, 68, 0.2);
+}
+
 .row-2 {
   display: grid;
   grid-template-columns: 1fr 1fr;

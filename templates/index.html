@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Auto Captions Studio — Transparent Overlay &amp; Sync Generator</title>
-  <link rel="stylesheet" href="/static/style.css?v=5" />
+  <link rel="stylesheet" href="/static/style.css?v=10" />
 </head>
 <body>
   <header class="topbar">
@@ -35,7 +35,10 @@
 
         <div class="form-group">
           <label for="audioFile">Upload Voiceover / Video (.mp3, .wav, .m4a, .mp4, .mov)</label>
-          <input type="file" id="audioFile" accept="audio/*,video/*" />
+          <div class="file-input-row">
+            <input type="file" id="audioFile" accept="audio/*,video/*" />
+            <button type="button" id="clearAudioBtn" class="btn btn-secondary btn-icon-clear hidden" title="Remove uploaded audio">&times;</button>
+          </div>
         </div>
 
         <div class="form-group" id="scriptBoxGroup">
@@ -47,9 +50,9 @@
           <div class="form-group">
             <label for="engineSelect">Transcription Engine</label>
             <select id="engineSelect">
-              <option value="gemini" selected>Gemini Audio (Primary)</option>
+              <option value="auto" selected>Auto (Gemini &rarr; Faster-Whisper)</option>
+              <option value="gemini">Gemini Audio Only</option>
               <option value="local">Faster-Whisper (Offline Local)</option>
-              <option value="auto">Auto (Gemini &rarr; Faster-Whisper)</option>
             </select>
           </div>
           <div class="form-group">
@@ -212,6 +215,21 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=9"></script>
+  <!-- GEMINI RETRY MODAL -->
+  <div id="retryModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 style="color:#f87171;">Gemini Temporarily Unavailable</h3>
+        <button id="closeRetryBtn" class="btn-icon">&times;</button>
+      </div>
+      <p id="retryErrorMsg" class="hint" style="font-size:13px; color:#e5e7eb; line-height:1.45; margin-bottom:14px;"></p>
+      <div class="btn-row" style="flex-direction:column; gap:8px;">
+        <button id="retryGeminiBtn" class="btn btn-primary full-width">Retry Gemini (Attempt 1/3)</button>
+        <button id="switchWhisperBtn" class="btn btn-secondary full-width">Switch to Faster-Whisper Now</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js?v=10"></script>
 </body>
 </html>

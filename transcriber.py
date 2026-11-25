@@ -99,6 +99,10 @@ def transcribe_local_whisper(wav_path: Path, model_size: str = "base") -> List[D
     return words
 
 
+class GeminiRetryableError(RuntimeError):
+    """Raised when Gemini fails (e.g. high demand/rate limit) and can be retried."""
+
+
 def transcribe_gemini(wav_path: Path) -> List[Dict[str, Any]]:
     """Transcribe audio using Gemini 2.5 Flash with word-level timestamps."""
     from google import genai
@@ -129,11 +133,11 @@ def transcribe_gemini(wav_path: Path) -> List[Dict[str, Any]]:
         msg = str(exc)
         low = msg.lower()
         if any(k in low for k in ("503", "429", "unavailable", "resource_exhausted", "overloaded", "high demand", "quota")):
-            raise RuntimeError(
+            raise GeminiRetryableError(
                 "Gemini is currently facing high demand or rate limits. "
-                "Please try again in a moment, or switch Transcription Engine to 'Faster-Whisper (Offline Local)'."
+                "Please retry, or switch to Faster-Whisper."
             ) from exc
-        raise RuntimeError(f"Gemini transcription failed: {msg}") from exc
+        raise GeminiRetryableError(f"Gemini transcription failed: {msg}") from exc
     raw = (resp.text or "").strip()
     match = re.search(r"\[.*\]", raw, re.DOTALL)
     if not match:
@@ -240,15 +244,8 @@ def transcribe_and_align(
         used_engine = "gemini"
     elif engine == "auto":
         if has_gemini:
-            try:
-                raw_words = transcribe_gemini(wav_path)
-                used_engine = "gemini"
-            except Exception as exc:
-                if has_local_whisper:
-                    raw_words = transcribe_local_whisper(wav_path)
-                    used_engine = f"faster_whisper (Gemini fallback: {exc})"
-                else:
-                    raise
+            raw_words = transcribe_gemini(wav_path)
+            used_engine = "gemini"
         elif has_local_whisper:
             raw_words = transcribe_local_whisper(wav_path)
             used_engine = "faster_whisper"

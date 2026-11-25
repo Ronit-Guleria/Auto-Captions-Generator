@@ -48,7 +48,14 @@ const els = {
   inputModeTabs: document.getElementById("inputModeTabs"),
   scriptBoxGroup: document.getElementById("scriptBoxGroup"),
   audioFile: document.getElementById("audioFile"),
+  clearAudioBtn: document.getElementById("clearAudioBtn"),
   scriptInput: document.getElementById("scriptInput"),
+
+  retryModal: document.getElementById("retryModal"),
+  closeRetryBtn: document.getElementById("closeRetryBtn"),
+  retryErrorMsg: document.getElementById("retryErrorMsg"),
+  retryGeminiBtn: document.getElementById("retryGeminiBtn"),
+  switchWhisperBtn: document.getElementById("switchWhisperBtn"),
   engineSelect: document.getElementById("engineSelect"),
   chunkModeSelect: document.getElementById("chunkModeSelect"),
   useGeminiCheck: document.getElementById("useGeminiCheck"),
@@ -175,7 +182,34 @@ function bindEvents() {
     els.settingsModal.classList.add("hidden");
   });
 
-  els.syncBtn.addEventListener("click", handleSync);
+  els.audioFile.addEventListener("change", () => {
+    els.clearAudioBtn.classList.toggle("hidden", !els.audioFile.files.length);
+  });
+
+  els.clearAudioBtn.addEventListener("click", () => {
+    els.audioFile.value = "";
+    els.clearAudioBtn.classList.add("hidden");
+    state.isPlaying = false;
+    cancelAnimationFrame(rafId);
+    els.playPauseBtn.innerHTML = "&#9654; Play";
+    els.previewAudio.pause();
+    els.previewAudio.removeAttribute("src");
+    els.previewAudio.load();
+    state.jobId = null;
+    state.words = [];
+    state.segments = [];
+    state.duration = 2.0;
+    state.currentTime = 0;
+    els.timelineSeek.max = 2.0;
+    els.timelineSeek.value = 0;
+    updateTimecodeUI(0);
+    els.syncStatus.textContent = "";
+    renderSegmentsList();
+    drawCanvasAtTime(0);
+  });
+
+  els.closeRetryBtn.addEventListener("click", () => els.retryModal.classList.add("hidden"));
+  els.syncBtn.addEventListener("click", () => handleSync(null, 0));
 
   els.chunkModeSelect.addEventListener("change", async () => {
     if (!state.words.length) return;
@@ -428,16 +462,17 @@ function updateTimecodeUI(t) {
   els.timecodeLabel.textContent = `${fmtTime(t)} / ${fmtTime(state.duration)}`;
 }
 
-async function handleSync() {
+async function handleSync(overrideEngine = null, retryAttempt = 0) {
   const file = els.audioFile.files[0];
   if (!file) {
     els.syncStatus.textContent = "Please choose an audio or video file first.";
     return;
   }
 
+  const chosenEngine = overrideEngine || els.engineSelect.value;
   const form = new FormData();
   form.append("file", file);
-  form.append("engine", els.engineSelect.value);
+  form.append("engine", chosenEngine);
   form.append("chunk_mode", els.chunkModeSelect.value);
   form.append("use_gemini", els.useGeminiCheck.checked ? "true" : "false");
   if (state.inputMode === "script") {
@@ -445,12 +480,40 @@ async function handleSync() {
   }
 
   els.syncBtn.disabled = true;
-  els.syncStatus.textContent = "Transcribing & syncing voiceover...";
+  els.retryModal.classList.add("hidden");
+  els.syncStatus.textContent =
+    chosenEngine === "local"
+      ? "Transcribing locally with Faster-Whisper..."
+      : retryAttempt > 0
+      ? `Retrying Gemini (${retryAttempt}/3)...`
+      : "Transcribing & syncing voiceover...";
 
   try {
     const res = await fetch("/api/transcribe", { method: "POST", body: form });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "Sync failed");
+    if (!res.ok) {
+      if (data.can_retry && (chosenEngine === "auto" || chosenEngine === "gemini")) {
+        const nextAttempt = retryAttempt + 1;
+        if (chosenEngine === "auto" && nextAttempt >= 3 && data.has_local_whisper) {
+          els.syncStatus.textContent = "Gemini failed 3 times. Shifting automatically to Faster-Whisper...";
+          els.syncBtn.disabled = false;
+          return await handleSync("local", 0);
+        }
+
+        els.retryErrorMsg.textContent = data.error || "Gemini is currently facing high demand.";
+        els.retryGeminiBtn.textContent = `Retry Gemini (Attempt ${nextAttempt}/3)`;
+        els.retryGeminiBtn.onclick = () => handleSync(chosenEngine, nextAttempt);
+
+        els.switchWhisperBtn.classList.toggle("hidden", !data.has_local_whisper);
+        els.switchWhisperBtn.onclick = () => {
+          els.retryModal.classList.add("hidden");
+          handleSync("local", 0);
+        };
+
+        els.retryModal.classList.remove("hidden");
+      }
+      throw new Error(data.error || "Sync failed");
+    }
 
     state.jobId = data.job_id;
     state.duration = data.duration;
