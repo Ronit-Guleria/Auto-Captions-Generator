@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import difflib
+import importlib.util
 import json
 import re
 import subprocess
@@ -249,18 +250,25 @@ def transcribe_and_align(
     keys = load_api_keys()
     has_cf = bool(keys.get("CF_ACCOUNT_ID") and keys.get("CF_API_TOKEN"))
 
+    has_local_whisper = importlib.util.find_spec("faster_whisper") is not None
+
     used_engine = engine
     if engine == "cloudflare" or (engine == "auto" and has_cf):
         try:
             raw_words = transcribe_cloudflare(wav_path)
             used_engine = "cloudflare"
         except Exception as exc:
-            if engine == "cloudflare":
-                raise
+            if engine == "cloudflare" or not has_local_whisper:
+                raise RuntimeError(f"Cloudflare Workers AI failed: {exc}") from exc
             # Fallback to local faster-whisper if Cloudflare fails in auto mode
             raw_words = transcribe_local_whisper(wav_path)
             used_engine = f"local_whisper (CF fallback: {exc})"
     else:
+        if not has_local_whisper:
+            raise ValueError(
+                "Local Whisper is not installed on cloud hosting. "
+                "Please enter your Cloudflare Account ID & API Token in API Keys (or Render Environment Variables)."
+            )
         raw_words = transcribe_local_whisper(wav_path)
         used_engine = "local_whisper"
 
