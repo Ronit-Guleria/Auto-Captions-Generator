@@ -118,7 +118,7 @@ def transcribe_gemini(wav_path: Path) -> List[Dict[str, Any]]:
         "No markdown, no explanation."
     )
     resp = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model="gemini-3.8-flash",
         contents=[
             types.Part.from_bytes(data=wav_path.read_bytes(), mime_type="audio/wav"),
             prompt,

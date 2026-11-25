@@ -253,7 +253,7 @@ def enhance_emphasis_with_gemini(segments: List[Dict[str, Any]]) -> List[Dict[st
             + json.dumps(multi)
         )
         resp = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-3.8-flash",
             contents=prompt,
         )
         raw = (resp.text or "").strip()
