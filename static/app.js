@@ -21,7 +21,7 @@ const DEMO_SEGMENTS = [
 ];
 
 const state = {
-  inputMode: "voiceover",
+  inputMode: "script",
   jobId: null,
   duration: 2.0,
   words: [],
@@ -249,7 +249,7 @@ function bindEvents() {
     }, 50);
   };
 
-  els.fullscreenBtn.addEventListener("click", async () => {
+  const toggleFullscreen = async () => {
     els.fullscreenBtn.blur();
     const box = els.previewFullscreenContainer;
     if (document.fullscreenElement === box) {
@@ -268,19 +268,30 @@ function bindEvents() {
       box.classList.add("is-fullscreen-fallback");
       syncFullscreenUI();
     }
-  });
+  };
+
+  els.fullscreenBtn.addEventListener("click", toggleFullscreen);
 
   document.addEventListener("fullscreenchange", syncFullscreenUI);
 
   document.addEventListener("keydown", (e) => {
     const tag = (e.target && e.target.tagName) ? e.target.tagName.toUpperCase() : "";
     const isTyping = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
-    if (e.code === "Space" && !isTyping) {
+    if (isTyping) return;
+
+    if (e.code === "Space") {
       e.preventDefault();
       if (document.activeElement && typeof document.activeElement.blur === "function") {
         document.activeElement.blur();
       }
       togglePlayPause();
+    } else if (e.code === "KeyF" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      e.preventDefault();
+      toggleFullscreen();
+    } else if (e.code === "KeyU" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      e.preventDefault();
+      setInputCollapsed(false);
+      els.audioFile.click();
     } else if (e.code === "Escape" && els.previewFullscreenContainer.classList.contains("is-fullscreen-fallback")) {
       els.previewFullscreenContainer.classList.remove("is-fullscreen-fallback");
       syncFullscreenUI();

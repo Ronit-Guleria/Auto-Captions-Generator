@@ -117,13 +117,23 @@ def transcribe_gemini(wav_path: Path) -> List[Dict[str, Any]]:
         '[{"word": "Hello", "start": 0.10, "end": 0.42}, ...]. '
         "No markdown, no explanation."
     )
-    resp = client.models.generate_content(
-        model="gemini-3.8-flash",
-        contents=[
-            types.Part.from_bytes(data=wav_path.read_bytes(), mime_type="audio/wav"),
-            prompt,
-        ],
-    )
+    try:
+        resp = client.models.generate_content(
+            model="gemini-3.8-flash",
+            contents=[
+                types.Part.from_bytes(data=wav_path.read_bytes(), mime_type="audio/wav"),
+                prompt,
+            ],
+        )
+    except Exception as exc:
+        msg = str(exc)
+        low = msg.lower()
+        if any(k in low for k in ("503", "429", "unavailable", "resource_exhausted", "overloaded", "high demand", "quota")):
+            raise RuntimeError(
+                "Gemini is currently facing high demand or rate limits. "
+                "Please try again in a moment, or switch Transcription Engine to 'Faster-Whisper (Offline Local)'."
+            ) from exc
+        raise RuntimeError(f"Gemini transcription failed: {msg}") from exc
     raw = (resp.text or "").strip()
     match = re.search(r"\[.*\]", raw, re.DOTALL)
     if not match:
@@ -205,11 +215,11 @@ def align_script_to_words(script_text: str, asr_words: List[Dict[str, Any]], tot
 
 def transcribe_and_align(
     wav_path: Path,
-    engine: str = "auto",
+    engine: str = "gemini",
     script_text: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Transcribe voiceover using Gemini Audio or local faster-whisper,
+    Transcribe voiceover using Gemini Audio (primary) or local faster-whisper,
     and optionally force-align a pasted script to the audio timestamps.
     """
     duration = get_audio_duration(wav_path)
@@ -218,23 +228,37 @@ def transcribe_and_align(
     has_local_whisper = importlib.util.find_spec("faster_whisper") is not None
 
     used_engine = engine
-    if engine == "gemini":
-        raw_words = transcribe_gemini(wav_path)
-        used_engine = "gemini"
-    elif engine == "local" or (engine == "auto" and has_local_whisper):
+    if engine == "local":
         if not has_local_whisper:
             raise ValueError(
-                "Local Whisper is not installed on cloud hosting. Use Auto or Gemini 2.5 Audio."
+                "Faster-Whisper is not installed on cloud hosting. Please choose Gemini Audio."
             )
         raw_words = transcribe_local_whisper(wav_path)
-        used_engine = "local_whisper"
-    elif has_gemini:
+        used_engine = "faster_whisper"
+    elif engine == "gemini":
         raw_words = transcribe_gemini(wav_path)
         used_engine = "gemini"
+    elif engine == "auto":
+        if has_gemini:
+            try:
+                raw_words = transcribe_gemini(wav_path)
+                used_engine = "gemini"
+            except Exception as exc:
+                if has_local_whisper:
+                    raw_words = transcribe_local_whisper(wav_path)
+                    used_engine = f"faster_whisper (Gemini fallback: {exc})"
+                else:
+                    raise
+        elif has_local_whisper:
+            raw_words = transcribe_local_whisper(wav_path)
+            used_engine = "faster_whisper"
+        else:
+            raise ValueError(
+                "No transcription engine available. Please add your Gemini API Key in API Keys."
+            )
     else:
-        raise ValueError(
-            "No transcription engine available. Please add your Gemini API Key in API Keys."
-        )
+        raw_words = transcribe_gemini(wav_path)
+        used_engine = "gemini"
 
     if script_text and script_text.strip():
         final_words = align_script_to_words(script_text, raw_words, duration)

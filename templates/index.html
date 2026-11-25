@@ -29,8 +29,8 @@
 
       <div id="inputSectionBody" class="input-section-body">
         <div class="tabs" id="inputModeTabs">
-          <button class="tab active" data-mode="voiceover">Voiceover Only</button>
-          <button class="tab" data-mode="script">Script + Voiceover</button>
+          <button class="tab active" data-mode="script">Script + Voiceover</button>
+          <button class="tab" data-mode="voiceover">Voiceover Only</button>
         </div>
 
         <div class="form-group">
@@ -38,7 +38,7 @@
           <input type="file" id="audioFile" accept="audio/*,video/*" />
         </div>
 
-        <div class="form-group hidden" id="scriptBoxGroup">
+        <div class="form-group" id="scriptBoxGroup">
           <label for="scriptInput">Paste Exact Script (synced 1:1 to your voiceover)</label>
           <textarea id="scriptInput" rows="4" placeholder="Paste your exact voiceover script here..."></textarea>
         </div>
@@ -47,9 +47,9 @@
           <div class="form-group">
             <label for="engineSelect">Transcription Engine</label>
             <select id="engineSelect">
-              <option value="auto">Auto (Local Whisper &rarr; Gemini Audio)</option>
-              <option value="gemini">Gemini Audio</option>
-              <option value="local">Local Whisper (Windows/PC Only)</option>
+              <option value="gemini" selected>Gemini Audio (Primary)</option>
+              <option value="local">Faster-Whisper (Offline Local)</option>
+              <option value="auto">Auto (Gemini &rarr; Faster-Whisper)</option>
             </select>
           </div>
           <div class="form-group">
@@ -212,6 +212,6 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=7"></script>
+  <script src="/static/app.js?v=9"></script>
 </body>
 </html>
