@@ -1,4 +1,4 @@
-"""Audio extraction, transcription (Gemini Audio / faster-whisper), and script forced alignment."""
+"""Audio extraction, multi-provider transcription (ElevenLabs -> Universal -> Gemini -> Grok -> Faster-Whisper), and script forced alignment."""
 
 from __future__ import annotations
 
@@ -7,8 +7,11 @@ import importlib.util
 import json
 import re
 import subprocess
+import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+import requests
 
 from config import load_api_keys
 
@@ -72,6 +75,155 @@ def _interpolate_words_from_text(text: str, start: float, end: float) -> List[Di
     return words
 
 
+def transcribe_elevenlabs(wav_path: Path) -> List[Dict[str, Any]]:
+    """Transcribe audio using ElevenLabs Scribe Speech-to-Text API."""
+    keys = load_api_keys()
+    api_key = keys.get("ELEVENLABS_API_KEY", "").strip()
+    if not api_key:
+        raise ValueError("ELEVENLABS_API_KEY is not set.")
+
+    duration = get_audio_duration(wav_path)
+    url = "https://api.elevenlabs.io/v1/speech-to-text"
+    headers = {"xi-api-key": api_key}
+
+    with wav_path.open("rb") as f:
+        resp = requests.post(
+            url,
+            headers=headers,
+            files={"file": ("audio.wav", f, "audio/wav")},
+            data={"model_id": "scribe_v1", "timestamps_granularity": "word"},
+            timeout=120,
+        )
+    resp.raise_for_status()
+    data = resp.json()
+
+    words: List[Dict[str, Any]] = []
+    for w in data.get("words", []):
+        if w.get("type", "word") != "word":
+            continue
+        tok = str(w.get("text", w.get("word", ""))).strip()
+        if tok:
+            s = max(0.0, float(w.get("start", 0.0)))
+            e = max(s + 0.05, float(w.get("end", s + 0.2)))
+            words.append({"word": tok, "start": round(s, 3), "end": round(e, 3)})
+
+    if not words and data.get("text"):
+        words = _interpolate_words_from_text(str(data["text"]), 0.0, duration)
+    if not words:
+        raise RuntimeError("ElevenLabs Scribe returned no transcribed words.")
+    return words
+
+
+def transcribe_universal(wav_path: Path) -> List[Dict[str, Any]]:
+    """Transcribe audio using AssemblyAI Universal STT API."""
+    keys = load_api_keys()
+    api_key = keys.get("UNIVERSAL_3.5_PRO", "").strip()
+    if not api_key:
+        raise ValueError("UNIVERSAL_3.5_PRO is not set.")
+
+    duration = get_audio_duration(wav_path)
+    headers = {"authorization": api_key}
+
+    # 1. Upload audio
+    with wav_path.open("rb") as f:
+        up_resp = requests.post(
+            "https://api.assemblyai.com/v2/upload",
+            headers=headers,
+            data=f,
+            timeout=120,
+        )
+    up_resp.raise_for_status()
+    upload_url = up_resp.json()["upload_url"]
+
+    # 2. Request transcription
+    tr_resp = requests.post(
+        "https://api.assemblyai.com/v2/transcript",
+        headers={**headers, "content-type": "application/json"},
+        json={"audio_url": upload_url, "speech_models": ["universal-2"]},
+        timeout=30,
+    )
+    tr_resp.raise_for_status()
+    transcript_id = tr_resp.json()["id"]
+
+    # 3. Poll until completed
+    poll_url = f"https://api.assemblyai.com/v2/transcript/{transcript_id}"
+    deadline = time.time() + 180
+    result: Dict[str, Any] = {}
+    while time.time() < deadline:
+        p_resp = requests.get(poll_url, headers=headers, timeout=30)
+        p_resp.raise_for_status()
+        result = p_resp.json()
+        status = result.get("status")
+        if status == "completed":
+            break
+        if status == "error":
+            raise RuntimeError(f"Universal STT error: {result.get('error', 'unknown')}")
+        time.sleep(1.5)
+    else:
+        raise TimeoutError("Universal STT timed out waiting for completion.")
+
+    words: List[Dict[str, Any]] = []
+    for w in result.get("words") or []:
+        tok = str(w.get("text", "")).strip()
+        if tok:
+            s = max(0.0, float(w.get("start", 0)) / 1000.0)
+            e = max(s + 0.05, float(w.get("end", 0)) / 1000.0)
+            words.append({"word": tok, "start": round(s, 3), "end": round(e, 3)})
+
+    if not words and result.get("text"):
+        words = _interpolate_words_from_text(str(result["text"]), 0.0, duration)
+    if not words:
+        raise RuntimeError("Universal STT returned no transcribed words.")
+    return words
+
+
+def transcribe_grok(wav_path: Path) -> List[Dict[str, Any]]:
+    """Transcribe audio using Grok (xAI) STT API."""
+    keys = load_api_keys()
+    api_key = keys.get("GROK_API_KEY", "").strip()
+    if not api_key:
+        raise ValueError("GROK_API_KEY is not set.")
+
+    duration = get_audio_duration(wav_path)
+    url = "https://api.x.ai/v1/audio/transcriptions"
+    headers = {"Authorization": f"Bearer {api_key}"}
+
+    with wav_path.open("rb") as f:
+        resp = requests.post(
+            url,
+            headers=headers,
+            files={"file": ("audio.wav", f, "audio/wav")},
+            data={"model": "grok-stt", "response_format": "verbose_json"},
+            timeout=120,
+        )
+    resp.raise_for_status()
+    data = resp.json()
+
+    words: List[Dict[str, Any]] = []
+    if isinstance(data.get("words"), list) and data["words"]:
+        for w in data["words"]:
+            tok = str(w.get("word", w.get("text", ""))).strip()
+            if tok:
+                s = max(0.0, float(w.get("start", 0.0)))
+                e = max(s + 0.05, float(w.get("end", s + 0.2)))
+                words.append({"word": tok, "start": round(s, 3), "end": round(e, 3)})
+    elif isinstance(data.get("segments"), list) and data["segments"]:
+        for seg in data["segments"]:
+            words.extend(
+                _interpolate_words_from_text(
+                    str(seg.get("text", "")),
+                    float(seg.get("start", 0.0)),
+                    float(seg.get("end", 0.5)),
+                )
+            )
+    elif data.get("text"):
+        words = _interpolate_words_from_text(str(data["text"]), 0.0, duration)
+
+    if not words:
+        raise RuntimeError("Grok STT returned no transcribed words.")
+    return words
+
+
 def transcribe_local_whisper(wav_path: Path, model_size: str = "base") -> List[Dict[str, Any]]:
     """Transcribe audio locally with faster-whisper for exact word-level timestamps."""
     from faster_whisper import WhisperModel
@@ -104,7 +256,7 @@ class GeminiRetryableError(RuntimeError):
 
 
 def transcribe_gemini(wav_path: Path) -> List[Dict[str, Any]]:
-    """Transcribe audio using Gemini 2.5 Flash with word-level timestamps."""
+    """Transcribe audio using Gemini 3.8 Flash with word-level timestamps."""
     from google import genai
     from google.genai import types
 
@@ -134,10 +286,10 @@ def transcribe_gemini(wav_path: Path) -> List[Dict[str, Any]]:
         low = msg.lower()
         if any(k in low for k in ("503", "429", "unavailable", "resource_exhausted", "overloaded", "high demand", "quota")):
             raise GeminiRetryableError(
-                "Gemini is currently facing high demand or rate limits. "
-                "Please retry, or switch to Faster-Whisper."
+                "Gemini is currently facing high demand or rate limits."
             ) from exc
         raise GeminiRetryableError(f"Gemini transcription failed: {msg}") from exc
+
     raw = (resp.text or "").strip()
     match = re.search(r"\[.*\]", raw, re.DOTALL)
     if not match:
@@ -203,9 +355,7 @@ def align_script_to_words(script_text: str, asr_words: List[Dict[str, Any]], tot
                 next_start = min(total_duration, prev_end + 0.25 * (j2 - j1))
             sub_text = " ".join(script_tokens[j1:j2])
             aligned.extend(_interpolate_words_from_text(sub_text, prev_end, next_start))
-        # 'delete' (extra ASR hallucination/filler not in script) is omitted
 
-    # Ensure monotonic non-overlapping timestamps
     for idx in range(len(aligned)):
         if aligned[idx]["end"] <= aligned[idx]["start"]:
             aligned[idx]["end"] = round(aligned[idx]["start"] + 0.08, 3)
@@ -217,45 +367,87 @@ def align_script_to_words(script_text: str, asr_words: List[Dict[str, Any]], tot
     return aligned
 
 
+def _run_with_one_retry(fn: Callable[[Path], List[Dict[str, Any]]], wav_path: Path) -> List[Dict[str, Any]]:
+    """Try a transcription provider once, and on failure retry once before raising."""
+    try:
+        return fn(wav_path)
+    except Exception:
+        time.sleep(0.8)
+        return fn(wav_path)
+
+
 def transcribe_and_align(
     wav_path: Path,
-    engine: str = "gemini",
+    engine: str = "auto",
     script_text: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Transcribe voiceover using Gemini Audio (primary) or local faster-whisper,
-    and optionally force-align a pasted script to the audio timestamps.
+    Transcribe voiceover in ordered fallback sequence:
+    1. ElevenLabs Scribe
+    2. Universal 3.5 Pro
+    3. Gemini (gemini-3.8-flash)
+    4. Grok STT
+    5. Faster-Whisper (offline mode only, when installed)
+
+    Each cloud model retries once before shifting to the next model.
     """
     duration = get_audio_duration(wav_path)
     keys = load_api_keys()
-    has_gemini = bool(keys.get("GEMINI_API_KEY"))
     has_local_whisper = importlib.util.find_spec("faster_whisper") is not None
 
-    used_engine = engine
+    single_map: Dict[str, Tuple[str, Callable[[Path], List[Dict[str, Any]]]]] = {
+        "elevenlabs": ("ElevenLabs Scribe", transcribe_elevenlabs),
+        "universal": ("Universal 3.5 Pro", transcribe_universal),
+        "gemini": ("Gemini (gemini-3.8-flash)", transcribe_gemini),
+        "grok": ("Grok STT", transcribe_grok),
+    }
+
+    used_engine = ""
+    raw_words: List[Dict[str, Any]] = []
+
     if engine == "local":
         if not has_local_whisper:
-            raise ValueError(
-                "Faster-Whisper is not installed on cloud hosting. Please choose Gemini Audio."
-            )
+            raise ValueError("Faster-Whisper is not installed on cloud hosting.")
         raw_words = transcribe_local_whisper(wav_path)
-        used_engine = "faster_whisper"
-    elif engine == "gemini":
-        raw_words = transcribe_gemini(wav_path)
-        used_engine = "gemini"
-    elif engine == "auto":
-        if has_gemini:
-            raw_words = transcribe_gemini(wav_path)
-            used_engine = "gemini"
-        elif has_local_whisper:
-            raw_words = transcribe_local_whisper(wav_path)
-            used_engine = "faster_whisper"
-        else:
-            raise ValueError(
-                "No transcription engine available. Please add your Gemini API Key in API Keys."
-            )
+        used_engine = "Faster-Whisper (Offline)"
+    elif engine in single_map:
+        label, fn = single_map[engine]
+        raw_words = _run_with_one_retry(fn, wav_path)
+        used_engine = label
     else:
-        raw_words = transcribe_gemini(wav_path)
-        used_engine = "gemini"
+        # Auto sequence: ElevenLabs -> Universal -> Gemini -> Grok -> Faster-Whisper (offline)
+        pipeline: List[Tuple[str, bool, Callable[[Path], List[Dict[str, Any]]]]] = [
+            ("ElevenLabs Scribe", bool(keys.get("ELEVENLABS_API_KEY")), transcribe_elevenlabs),
+            ("Universal 3.5 Pro", bool(keys.get("UNIVERSAL_3.5_PRO")), transcribe_universal),
+            ("Gemini (gemini-3.8-flash)", bool(keys.get("GEMINI_API_KEY")), transcribe_gemini),
+            ("Grok STT", bool(keys.get("GROK_API_KEY")), transcribe_grok),
+        ]
+
+        errors: List[str] = []
+        for label, is_configured, fn in pipeline:
+            if not is_configured:
+                continue
+            try:
+                raw_words = _run_with_one_retry(fn, wav_path)
+                if errors:
+                    used_engine = f"{label} (fallback after {', '.join(e.split(':')[0] for e in errors)})"
+                else:
+                    used_engine = label
+                break
+            except Exception as exc:
+                errors.append(f"{label}: {exc}")
+
+        if not raw_words:
+            if has_local_whisper:
+                raw_words = transcribe_local_whisper(wav_path)
+                used_engine = (
+                    f"Faster-Whisper (offline fallback after {', '.join(e.split(':')[0] for e in errors)})"
+                    if errors
+                    else "Faster-Whisper (Offline)"
+                )
+            else:
+                detail = " | ".join(errors) if errors else "No API keys configured."
+                raise RuntimeError(f"All cloud transcription models failed: {detail}")
 
     if script_text and script_text.strip():
         final_words = align_script_to_words(script_text, raw_words, duration)

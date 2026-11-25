@@ -50,8 +50,11 @@
           <div class="form-group">
             <label for="engineSelect">Transcription Engine</label>
             <select id="engineSelect">
-              <option value="auto" selected>Auto (Gemini &rarr; Faster-Whisper)</option>
-              <option value="gemini">Gemini Audio Only</option>
+              <option value="auto" selected>Auto (ElevenLabs &rarr; Universal &rarr; Gemini &rarr; Grok)</option>
+              <option value="elevenlabs">ElevenLabs Scribe</option>
+              <option value="universal">Universal 3.5 Pro</option>
+              <option value="gemini">Gemini Audio</option>
+              <option value="grok">Grok STT</option>
               <option value="local">Faster-Whisper (Offline Local)</option>
             </select>
           </div>
@@ -230,6 +233,6 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=10"></script>
+  <script src="/static/app.js?v=12"></script>
 </body>
 </html>

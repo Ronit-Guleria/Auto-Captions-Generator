@@ -48,6 +48,7 @@ def get_config():
             "styles": list(CAPTION_STYLES.values()),
             "aspect_ratios": {k: {"width": v[0], "height": v[1]} for k, v in ASPECT_RATIOS.items()},
             "background_modes": BACKGROUND_MODES,
+            "has_local_whisper": importlib.util.find_spec("faster_whisper") is not None,
             "keys_configured": {
                 "gemini": bool(keys.get("GEMINI_API_KEY")),
             },

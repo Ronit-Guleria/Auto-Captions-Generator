@@ -90,7 +90,10 @@ def resolve_font(role: str) -> str:
 def load_api_keys() -> Dict[str, str]:
     """Load API keys from .env file and environment variables."""
     keys = {
+        "ELEVENLABS_API_KEY": os.environ.get("ELEVENLABS_API_KEY", ""),
+        "UNIVERSAL_3.5_PRO": os.environ.get("UNIVERSAL_3.5_PRO", ""),
         "GEMINI_API_KEY": os.environ.get("GEMINI_API_KEY", ""),
+        "GROK_API_KEY": os.environ.get("GROK_API_KEY", ""),
     }
     if ENV_FILE.exists():
         for line in ENV_FILE.read_text(encoding="utf-8").splitlines():

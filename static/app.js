@@ -104,6 +104,12 @@ async function init() {
     state.styles[s.id] = s;
   });
   updateKeyBadge(cfg.keys_configured);
+  if (!cfg.has_local_whisper) {
+    Array.from(els.engineSelect.options).forEach((opt) => {
+      if (opt.value === "local") opt.remove();
+    });
+    els.engineSelect.value = "auto";
+  }
   renderStyleGrid();
   bindEvents();
   fitPreviewBox();
@@ -527,7 +533,7 @@ async function handleSync(overrideEngine = null, retryAttempt = 0) {
     els.timelineSeek.value = 0;
     updateTimecodeUI(0);
 
-    els.syncStatus.textContent = `Synced ${data.segments.length} captions (${data.duration}s) via ${data.engine}`;
+    els.syncStatus.innerHTML = `Synced ${data.segments.length} captions (${data.duration}s) &bull; <strong>Model: ${data.engine}</strong>`;
     renderSegmentsList();
     setInputCollapsed(true);
     drawCanvasAtTime(0);
