@@ -273,35 +273,43 @@ function renderSafeZoneOverlay() {
 
   if (mode === "reels" || mode === "shorts" || mode === "tiktok") {
     const label =
-      mode === "reels"
-        ? "IG REELS SAFE ZONE"
-        : mode === "shorts"
-        ? "YT SHORTS SAFE ZONE"
-        : "TIKTOK SAFE ZONE";
+      mode === "reels" ? "IG REELS SAFE ZONE" : mode === "shorts" ? "YT SHORTS SAFE ZONE" : "TIKTOK SAFE ZONE";
     const user = mode === "shorts" ? "@YourChannel" : "@yourhandle";
     ov.innerHTML = `
-      <div class="sz-tag">${label}</div>
-      <div class="sz-right-icons">
-        <div class="sz-icon-circle">&#9829;</div>
-        <div class="sz-icon-circle">&#128172;</div>
-        <div class="sz-icon-circle">&#10148;</div>
-        <div class="sz-icon-circle">&#8942;</div>
-      </div>
-      <div class="sz-bottom-meta">
-        <div class="sz-user">${user}</div>
-        <div class="sz-desc">Caption &amp; audio safe area</div>
-      </div>
+      <svg viewBox="0 0 1080 1920" preserveAspectRatio="none" style="width:100%;height:100%;display:block;">
+        <!-- Safe zone dashed border -->
+        <rect x="48" y="180" width="840" height="1280" rx="24" fill="none" stroke="rgba(239,68,68,0.6)" stroke-width="5" stroke-dasharray="18 14" />
+        <!-- Top badge -->
+        <rect x="310" y="54" width="460" height="58" rx="29" fill="rgba(239,68,68,0.85)" />
+        <text x="540" y="93" text-anchor="middle" fill="#ffffff" font-family="sans-serif" font-size="30" font-weight="700">${label}</text>
+        <!-- Right side action buttons -->
+        <circle cx="975" cy="1120" r="44" fill="rgba(0,0,0,0.55)" stroke="rgba(255,255,255,0.4)" stroke-width="3" />
+        <text x="975" y="1133" text-anchor="middle" fill="#fff" font-size="36">&#9829;</text>
+        <circle cx="975" cy="1260" r="44" fill="rgba(0,0,0,0.55)" stroke="rgba(255,255,255,0.4)" stroke-width="3" />
+        <text x="975" y="1272" text-anchor="middle" fill="#fff" font-size="32">&#128172;</text>
+        <circle cx="975" cy="1400" r="44" fill="rgba(0,0,0,0.55)" stroke="rgba(255,255,255,0.4)" stroke-width="3" />
+        <text x="975" y="1413" text-anchor="middle" fill="#fff" font-size="34">&#10148;</text>
+        <circle cx="975" cy="1540" r="44" fill="rgba(0,0,0,0.55)" stroke="rgba(255,255,255,0.4)" stroke-width="3" />
+        <text x="975" y="1552" text-anchor="middle" fill="#fff" font-size="34">&#8942;</text>
+        <!-- Bottom blocked UI area -->
+        <rect x="36" y="1520" width="840" height="340" rx="20" fill="rgba(0,0,0,0.62)" stroke="rgba(255,255,255,0.18)" stroke-width="2" />
+        <text x="72" y="1605" fill="#ffffff" font-family="sans-serif" font-size="40" font-weight="700">${user}</text>
+        <text x="72" y="1675" fill="rgba(255,255,255,0.78)" font-family="sans-serif" font-size="32">Caption &amp; audio UI area</text>
+        <text x="72" y="1730" fill="rgba(239,68,68,0.9)" font-family="sans-serif" font-size="28" font-weight="600">Keep captions inside dashed box</text>
+      </svg>
     `;
   } else if (mode === "youtube") {
     ov.innerHTML = `
-      <div class="sz-tag">YOUTUBE 16:9 UI</div>
-      <div class="sz-yt-bar">
-        <div class="sz-yt-progress"></div>
-        <div style="display:flex;justify-content:space-between;font-size:clamp(7px, 2.5cqw, 10px);">
-          <span>&#9654; 0:42 / 3:15</span>
-          <span>CC &nbsp; &#9881; &nbsp; &#9974;</span>
-        </div>
-      </div>
+      <svg viewBox="0 0 1920 1080" preserveAspectRatio="none" style="width:100%;height:100%;display:block;">
+        <rect x="80" y="60" width="1760" height="780" rx="20" fill="none" stroke="rgba(239,68,68,0.6)" stroke-width="5" stroke-dasharray="20 14" />
+        <rect x="740" y="28" width="440" height="54" rx="27" fill="rgba(239,68,68,0.85)" />
+        <text x="960" y="65" text-anchor="middle" fill="#ffffff" font-family="sans-serif" font-size="28" font-weight="700">YOUTUBE 16:9 SAFE ZONE</text>
+        <rect x="0" y="900" width="1920" height="180" fill="rgba(0,0,0,0.75)" />
+        <rect x="48" y="945" width="1824" height="10" rx="5" fill="rgba(255,255,255,0.28)" />
+        <rect x="48" y="945" width="720" height="10" rx="5" fill="#ef4444" />
+        <text x="56" y="1020" fill="#ffffff" font-family="sans-serif" font-size="36">&#9654;  0:42 / 3:15</text>
+        <text x="1860" y="1020" text-anchor="end" fill="#ffffff" font-family="sans-serif" font-size="34">CC   &#9881;   &#9974;</text>
+      </svg>
     `;
   }
 }
