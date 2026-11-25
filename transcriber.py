@@ -1,8 +1,7 @@
-"""Audio extraction, transcription (Cloudflare Workers AI / faster-whisper), and script forced alignment."""
+"""Audio extraction, transcription (Gemini Audio / faster-whisper), and script forced alignment."""
 
 from __future__ import annotations
 
-import base64
 import difflib
 import importlib.util
 import json
@@ -10,8 +9,6 @@ import re
 import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-
-import requests
 
 from config import load_api_keys
 
@@ -75,82 +72,6 @@ def _interpolate_words_from_text(text: str, start: float, end: float) -> List[Di
     return words
 
 
-def transcribe_cloudflare(wav_path: Path) -> List[Dict[str, Any]]:
-    """Transcribe audio using Cloudflare Workers AI Whisper."""
-    keys = load_api_keys()
-    account_id = keys.get("CF_ACCOUNT_ID", "").strip()
-    api_token = keys.get("CF_API_TOKEN", "").strip()
-    if not account_id or not api_token:
-        raise ValueError("Cloudflare Workers AI credentials (CF_ACCOUNT_ID and CF_API_TOKEN) are not set.")
-
-    audio_bytes = wav_path.read_bytes()
-    duration = get_audio_duration(wav_path)
-
-    # Try @cf/openai/whisper-large-v3-turbo first (supports base64 audio + segments)
-    url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/@cf/openai/whisper-large-v3-turbo"
-    headers = {
-        "Authorization": f"Bearer {api_token}",
-        "Content-Type": "application/json",
-    }
-    payload = {"audio": base64.b64encode(audio_bytes).decode("ascii")}
-    resp = requests.post(url, headers=headers, json=payload, timeout=120)
-
-    if resp.status_code != 200:
-        # Fallback to @cf/openai/whisper binary upload
-        url_fallback = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/@cf/openai/whisper"
-        resp = requests.post(
-            url_fallback,
-            headers={"Authorization": f"Bearer {api_token}", "Content-Type": "application/octet-stream"},
-            data=audio_bytes,
-            timeout=120,
-        )
-
-    resp.raise_for_status()
-    data = resp.json()
-    if not data.get("success", True) and "result" not in data:
-        raise RuntimeError(f"Cloudflare AI error: {json.dumps(data)}")
-
-    result = data.get("result", data)
-    words: List[Dict[str, Any]] = []
-
-    if isinstance(result.get("words"), list) and result["words"]:
-        for w in result["words"]:
-            tok = str(w.get("word", "")).strip()
-            if tok:
-                words.append(
-                    {
-                        "word": tok,
-                        "start": round(float(w.get("start", 0.0)), 3),
-                        "end": round(float(w.get("end", 0.0)), 3),
-                    }
-                )
-    elif isinstance(result.get("segments"), list) and result["segments"]:
-        for seg in result["segments"]:
-            seg_words = seg.get("words")
-            if isinstance(seg_words, list) and seg_words:
-                for w in seg_words:
-                    tok = str(w.get("word", "")).strip()
-                    if tok:
-                        words.append(
-                            {
-                                "word": tok,
-                                "start": round(float(w.get("start", 0.0)), 3),
-                                "end": round(float(w.get("end", 0.0)), 3),
-                            }
-                        )
-            else:
-                seg_text = str(seg.get("text", "")).strip()
-                s_start = float(seg.get("start", 0.0))
-                s_end = float(seg.get("end", s_start + 0.5))
-                words.extend(_interpolate_words_from_text(seg_text, s_start, s_end))
-    elif result.get("text"):
-        words = _interpolate_words_from_text(str(result["text"]), 0.0, duration)
-
-    if not words:
-        raise RuntimeError("Cloudflare Whisper returned no transcribed words.")
-    return words
-
-
 def transcribe_local_whisper(wav_path: Path, model_size: str = "base") -> List[Dict[str, Any]]:
     """Transcribe audio locally with faster-whisper for exact word-level timestamps."""
     from faster_whisper import WhisperModel
@@ -175,6 +96,51 @@ def transcribe_local_whisper(wav_path: Path, model_size: str = "base") -> List[D
 
     if not words:
         raise RuntimeError("Local faster-whisper returned no transcribed words.")
+    return words
+
+
+def transcribe_gemini(wav_path: Path) -> List[Dict[str, Any]]:
+    """Transcribe audio using Gemini 2.5 Flash with word-level timestamps."""
+    from google import genai
+    from google.genai import types
+
+    keys = load_api_keys()
+    api_key = keys.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise ValueError("GEMINI_API_KEY is not set.")
+
+    duration = get_audio_duration(wav_path)
+    client = genai.Client(api_key=api_key)
+    prompt = (
+        f"Transcribe this audio (total duration {duration:.2f} seconds) word-by-word. "
+        "Return ONLY a JSON array of objects with exact timestamps in seconds: "
+        '[{"word": "Hello", "start": 0.10, "end": 0.42}, ...]. '
+        "No markdown, no explanation."
+    )
+    resp = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=[
+            types.Part.from_bytes(data=wav_path.read_bytes(), mime_type="audio/wav"),
+            prompt,
+        ],
+    )
+    raw = (resp.text or "").strip()
+    match = re.search(r"\[.*\]", raw, re.DOTALL)
+    if not match:
+        raise RuntimeError("Gemini did not return valid word-timestamp JSON.")
+
+    items = json.loads(match.group(0))
+    words: List[Dict[str, Any]] = []
+    for it in items:
+        tok = str(it.get("word", "")).strip()
+        if not tok:
+            continue
+        s = max(0.0, min(duration, float(it.get("start", 0.0))))
+        e = max(s + 0.05, min(duration, float(it.get("end", s + 0.25))))
+        words.append({"word": tok, "start": round(s, 3), "end": round(e, 3)})
+
+    if not words:
+        raise RuntimeError("Gemini returned no transcribed words.")
     return words
 
 
@@ -243,34 +209,32 @@ def transcribe_and_align(
     script_text: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Transcribe voiceover using Cloudflare Workers AI or local faster-whisper,
+    Transcribe voiceover using Gemini Audio or local faster-whisper,
     and optionally force-align a pasted script to the audio timestamps.
     """
     duration = get_audio_duration(wav_path)
     keys = load_api_keys()
-    has_cf = bool(keys.get("CF_ACCOUNT_ID") and keys.get("CF_API_TOKEN"))
-
+    has_gemini = bool(keys.get("GEMINI_API_KEY"))
     has_local_whisper = importlib.util.find_spec("faster_whisper") is not None
 
     used_engine = engine
-    if engine == "cloudflare" or (engine == "auto" and has_cf):
-        try:
-            raw_words = transcribe_cloudflare(wav_path)
-            used_engine = "cloudflare"
-        except Exception as exc:
-            if engine == "cloudflare" or not has_local_whisper:
-                raise RuntimeError(f"Cloudflare Workers AI failed: {exc}") from exc
-            # Fallback to local faster-whisper if Cloudflare fails in auto mode
-            raw_words = transcribe_local_whisper(wav_path)
-            used_engine = f"local_whisper (CF fallback: {exc})"
-    else:
+    if engine == "gemini":
+        raw_words = transcribe_gemini(wav_path)
+        used_engine = "gemini"
+    elif engine == "local" or (engine == "auto" and has_local_whisper):
         if not has_local_whisper:
             raise ValueError(
-                "Local Whisper is not installed on cloud hosting. "
-                "Please enter your Cloudflare Account ID & API Token in API Keys (or Render Environment Variables)."
+                "Local Whisper is not installed on cloud hosting. Use Auto or Gemini 2.5 Audio."
             )
         raw_words = transcribe_local_whisper(wav_path)
         used_engine = "local_whisper"
+    elif has_gemini:
+        raw_words = transcribe_gemini(wav_path)
+        used_engine = "gemini"
+    else:
+        raise ValueError(
+            "No transcription engine available. Please add your Gemini API Key in API Keys."
+        )
 
     if script_text and script_text.strip():
         final_words = align_script_to_words(script_text, raw_words, duration)

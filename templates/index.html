@@ -47,9 +47,9 @@
           <div class="form-group">
             <label for="engineSelect">Transcription Engine</label>
             <select id="engineSelect">
-              <option value="auto">Auto (Cloudflare AI &rarr; Local Whisper)</option>
-              <option value="cloudflare">Cloudflare Workers AI</option>
-              <option value="local">Local Whisper (Exact Word Timings)</option>
+              <option value="auto">Auto (Local Whisper &rarr; Gemini Audio)</option>
+              <option value="gemini">Gemini 2.5 Audio</option>
+              <option value="local">Local Whisper (Windows/PC Only)</option>
             </select>
           </div>
           <div class="form-group">
@@ -208,18 +208,10 @@
         <label for="geminiKeyInput">Gemini API Key</label>
         <input type="password" id="geminiKeyInput" placeholder="AIza..." />
       </div>
-      <div class="form-group">
-        <label for="cfAccountInput">Cloudflare Account ID</label>
-        <input type="text" id="cfAccountInput" placeholder="32-char Cloudflare Account ID" />
-      </div>
-      <div class="form-group">
-        <label for="cfTokenInput">Cloudflare Workers AI API Token</label>
-        <input type="password" id="cfTokenInput" placeholder="Bearer token..." />
-      </div>
-      <button id="saveSettingsBtn" class="btn btn-primary full-width">Save Keys</button>
+      <button id="saveSettingsBtn" class="btn btn-primary full-width">Save Key</button>
     </div>
   </div>
 
-  <script src="/static/app.js?v=6"></script>
+  <script src="/static/app.js?v=7"></script>
 </body>
 </html>

@@ -40,8 +40,6 @@ const els = {
   saveSettingsBtn: document.getElementById("saveSettingsBtn"),
   settingsModal: document.getElementById("settingsModal"),
   geminiKeyInput: document.getElementById("geminiKeyInput"),
-  cfAccountInput: document.getElementById("cfAccountInput"),
-  cfTokenInput: document.getElementById("cfTokenInput"),
 
   toggleInputBtn: document.getElementById("toggleInputBtn"),
   toggleInputIcon: document.getElementById("toggleInputIcon"),
@@ -113,9 +111,7 @@ async function init() {
 }
 
 function updateKeyBadge(keys) {
-  const g = keys.gemini ? "Gemini OK" : "No Gemini";
-  const c = keys.cloudflare ? "CF AI OK" : "Local Whisper";
-  els.keyStatusBadge.textContent = `${g} • ${c}`;
+  els.keyStatusBadge.textContent = keys.gemini ? "Gemini API OK" : "No Gemini Key";
 }
 
 function renderStyleGrid() {
@@ -170,14 +166,11 @@ function bindEvents() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         gemini_api_key: els.geminiKeyInput.value,
-        cf_account_id: els.cfAccountInput.value,
-        cf_api_token: els.cfTokenInput.value,
       }),
     });
     const data = await res.json();
     updateKeyBadge({
       gemini: data.configured.GEMINI_API_KEY,
-      cloudflare: data.configured.CF_ACCOUNT_ID && data.configured.CF_API_TOKEN,
     });
     els.settingsModal.classList.add("hidden");
   });

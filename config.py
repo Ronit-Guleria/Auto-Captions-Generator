@@ -91,8 +91,6 @@ def load_api_keys() -> Dict[str, str]:
     """Load API keys from .env file and environment variables."""
     keys = {
         "GEMINI_API_KEY": os.environ.get("GEMINI_API_KEY", ""),
-        "CF_ACCOUNT_ID": os.environ.get("CF_ACCOUNT_ID", ""),
-        "CF_API_TOKEN": os.environ.get("CF_API_TOKEN", ""),
     }
     if ENV_FILE.exists():
         for line in ENV_FILE.read_text(encoding="utf-8").splitlines():
@@ -108,15 +106,11 @@ def load_api_keys() -> Dict[str, str]:
     return keys
 
 
-def save_api_keys(gemini_api_key: str = "", cf_account_id: str = "", cf_api_token: str = "") -> Dict[str, str]:
+def save_api_keys(gemini_api_key: str = "") -> Dict[str, bool]:
     """Persist API keys to .env and update process environment."""
     current = load_api_keys()
     if gemini_api_key.strip():
         current["GEMINI_API_KEY"] = gemini_api_key.strip()
-    if cf_account_id.strip():
-        current["CF_ACCOUNT_ID"] = cf_account_id.strip()
-    if cf_api_token.strip():
-        current["CF_API_TOKEN"] = cf_api_token.strip()
 
     lines = [f"{k}={v}" for k, v in current.items() if v]
     ENV_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")

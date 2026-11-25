@@ -49,7 +49,6 @@ def get_config():
             "background_modes": BACKGROUND_MODES,
             "keys_configured": {
                 "gemini": bool(keys.get("GEMINI_API_KEY")),
-                "cloudflare": bool(keys.get("CF_ACCOUNT_ID") and keys.get("CF_API_TOKEN")),
             },
         }
     )
@@ -60,8 +59,6 @@ def update_settings():
     data = request.get_json(force=True) or {}
     status = save_api_keys(
         gemini_api_key=data.get("gemini_api_key", ""),
-        cf_account_id=data.get("cf_account_id", ""),
-        cf_api_token=data.get("cf_api_token", ""),
     )
     return jsonify({"ok": True, "configured": status})
 
