@@ -40,6 +40,8 @@ const els = {
   saveSettingsBtn: document.getElementById("saveSettingsBtn"),
   settingsModal: document.getElementById("settingsModal"),
   geminiKeyInput: document.getElementById("geminiKeyInput"),
+  checkKeysBtn: document.getElementById("checkKeysBtn"),
+  keyCheckResults: document.getElementById("keyCheckResults"),
 
   toggleInputBtn: document.getElementById("toggleInputBtn"),
   toggleInputIcon: document.getElementById("toggleInputIcon"),
@@ -186,6 +188,28 @@ function bindEvents() {
       gemini: data.configured.GEMINI_API_KEY,
     });
     els.settingsModal.classList.add("hidden");
+  });
+
+  els.checkKeysBtn.addEventListener("click", async () => {
+    els.checkKeysBtn.disabled = true;
+    els.keyCheckResults.innerHTML = '<div class="hint" style="margin-top:10px;">Testing all API keys...</div>';
+    try {
+      const res = await fetch("/api/check-keys", { method: "POST" });
+      const data = await res.json();
+      els.keyCheckResults.innerHTML = (data.results || [])
+        .map(
+          (item) => `
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:7px 9px;margin-top:6px;background:#0d0f14;border:1px solid #252b3b;border-radius:6px;font-size:12px;">
+            <span style="color:#e5e7eb;">${item.name}</span>
+            <span style="font-weight:700;color:${item.ok ? "#34d399" : "#f87171"};white-space:nowrap;">${item.ok ? "Working" : item.status}</span>
+          </div>`
+        )
+        .join("");
+    } catch (err) {
+      els.keyCheckResults.innerHTML = `<div class="status-msg">Error: ${err.message}</div>`;
+    } finally {
+      els.checkKeysBtn.disabled = false;
+    }
   });
 
   els.audioFile.addEventListener("change", () => {

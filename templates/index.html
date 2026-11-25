@@ -50,11 +50,9 @@
           <div class="form-group">
             <label for="engineSelect">Transcription Engine</label>
             <select id="engineSelect">
-              <option value="auto" selected>Auto (ElevenLabs &rarr; Universal &rarr; Gemini &rarr; Grok)</option>
-              <option value="elevenlabs">ElevenLabs Scribe</option>
-              <option value="universal">Universal 3.5 Pro</option>
-              <option value="gemini">Gemini Audio</option>
-              <option value="grok">Grok STT</option>
+              <option value="auto" selected>Auto (Cloudflare AI &rarr; Gemini)</option>
+              <option value="cloudflare">Cloudflare Workers AI Whisper</option>
+              <option value="gemini">Gemini Audio (gemini-3.8-flash)</option>
               <option value="local">Faster-Whisper (Offline Local)</option>
             </select>
           </div>
@@ -215,6 +213,8 @@
         <input type="password" id="geminiKeyInput" placeholder="AIza..." />
       </div>
       <button id="saveSettingsBtn" class="btn btn-primary full-width">Save Key</button>
+      <button id="checkKeysBtn" class="btn btn-secondary full-width" style="margin-top:8px;">Check All API Keys</button>
+      <div id="keyCheckResults" class="key-check-results"></div>
     </div>
   </div>
 
@@ -233,6 +233,6 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=12"></script>
+  <script src="/static/app.js?v=15"></script>
 </body>
 </html>

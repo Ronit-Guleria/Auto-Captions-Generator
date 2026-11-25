@@ -75,6 +75,65 @@ def _interpolate_words_from_text(text: str, start: float, end: float) -> List[Di
     return words
 
 
+def _get_cf_credentials() -> Tuple[str, List[str]]:
+    keys = load_api_keys()
+    account_id = keys.get("CF_ACCOUNT_ID", "").strip()
+    tokens: List[str] = []
+    for k in ("CF_ELEVENLABS_TOKEN", "CF_UNIVERSAL_TOKEN", "CF_API_TOKEN"):
+        val = keys.get(k, "").strip()
+        if val and val not in tokens:
+            tokens.append(val)
+    return account_id, tokens
+
+
+def transcribe_cloudflare(wav_path: Path) -> List[Dict[str, Any]]:
+    """Transcribe audio using Cloudflare Workers AI Whisper (trying CF_ELEVENLABS_TOKEN then CF_UNIVERSAL_TOKEN)."""
+    import base64
+
+    account_id, tokens = _get_cf_credentials()
+    if not account_id or not tokens:
+        raise ValueError("CF_ACCOUNT_ID and at least one Cloudflare token are required.")
+
+    audio_bytes = wav_path.read_bytes()
+    duration = get_audio_duration(wav_path)
+    url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/@cf/openai/whisper-large-v3-turbo"
+    payload = {"audio": base64.b64encode(audio_bytes).decode("ascii")}
+
+    last_exc: Exception | None = None
+    data: Dict[str, Any] = {}
+    for token in tokens:
+        try:
+            resp = requests.post(
+                url,
+                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                json=payload,
+                timeout=120,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            break
+        except Exception as exc:
+            last_exc = exc
+    else:
+        raise RuntimeError(f"Cloudflare Workers AI failed across all tokens: {last_exc}") from last_exc
+
+    result = data.get("result", data)
+    words: List[Dict[str, Any]] = []
+    if isinstance(result.get("words"), list) and result["words"]:
+        for w in result["words"]:
+            tok = str(w.get("word", "")).strip()
+            if tok:
+                words.append({"word": tok, "start": round(float(w.get("start", 0)), 3), "end": round(float(w.get("end", 0)), 3)})
+    elif isinstance(result.get("segments"), list) and result["segments"]:
+        for seg in result["segments"]:
+            words.extend(_interpolate_words_from_text(str(seg.get("text", "")), float(seg.get("start", 0)), float(seg.get("end", 0.5))))
+    elif result.get("text"):
+        words = _interpolate_words_from_text(str(result["text"]), 0.0, duration)
+    if not words:
+        raise RuntimeError("Cloudflare Workers AI returned no transcribed words.")
+    return words
+
+
 def transcribe_elevenlabs(wav_path: Path) -> List[Dict[str, Any]]:
     """Transcribe audio using ElevenLabs Scribe Speech-to-Text API."""
     keys = load_api_keys()
@@ -174,53 +233,6 @@ def transcribe_universal(wav_path: Path) -> List[Dict[str, Any]]:
         words = _interpolate_words_from_text(str(result["text"]), 0.0, duration)
     if not words:
         raise RuntimeError("Universal STT returned no transcribed words.")
-    return words
-
-
-def transcribe_grok(wav_path: Path) -> List[Dict[str, Any]]:
-    """Transcribe audio using Grok (xAI) STT API."""
-    keys = load_api_keys()
-    api_key = keys.get("GROK_API_KEY", "").strip()
-    if not api_key:
-        raise ValueError("GROK_API_KEY is not set.")
-
-    duration = get_audio_duration(wav_path)
-    url = "https://api.x.ai/v1/audio/transcriptions"
-    headers = {"Authorization": f"Bearer {api_key}"}
-
-    with wav_path.open("rb") as f:
-        resp = requests.post(
-            url,
-            headers=headers,
-            files={"file": ("audio.wav", f, "audio/wav")},
-            data={"model": "grok-stt", "response_format": "verbose_json"},
-            timeout=120,
-        )
-    resp.raise_for_status()
-    data = resp.json()
-
-    words: List[Dict[str, Any]] = []
-    if isinstance(data.get("words"), list) and data["words"]:
-        for w in data["words"]:
-            tok = str(w.get("word", w.get("text", ""))).strip()
-            if tok:
-                s = max(0.0, float(w.get("start", 0.0)))
-                e = max(s + 0.05, float(w.get("end", s + 0.2)))
-                words.append({"word": tok, "start": round(s, 3), "end": round(e, 3)})
-    elif isinstance(data.get("segments"), list) and data["segments"]:
-        for seg in data["segments"]:
-            words.extend(
-                _interpolate_words_from_text(
-                    str(seg.get("text", "")),
-                    float(seg.get("start", 0.0)),
-                    float(seg.get("end", 0.5)),
-                )
-            )
-    elif data.get("text"):
-        words = _interpolate_words_from_text(str(data["text"]), 0.0, duration)
-
-    if not words:
-        raise RuntimeError("Grok STT returned no transcribed words.")
     return words
 
 
@@ -330,6 +342,23 @@ def align_script_to_words(script_text: str, asr_words: List[Dict[str, Any]], tot
     norm_asr = [_normalize_token(w["word"]) for w in asr_words]
 
     matcher = difflib.SequenceMatcher(None, norm_asr, norm_script, autojunk=False)
+    if matcher.ratio() < 0.25 and len(asr_words) > 0:
+        # Fallback when ASR returned a different script (e.g. Devanagari/Urdu) than the Romanized pasted script:
+        # map each script word proportionally onto the real ASR word timestamps so pauses stay synced.
+        n_asr = len(asr_words)
+        n_scr = len(script_tokens)
+        aligned_slots: List[Dict[str, Any]] = []
+        for j, tok in enumerate(script_tokens):
+            idx_a = min(n_asr - 1, int(j * n_asr / n_scr))
+            aligned_slots.append(
+                {
+                    "word": tok,
+                    "start": asr_words[idx_a]["start"],
+                    "end": asr_words[idx_a]["end"],
+                }
+            )
+        return aligned_slots
+
     aligned: List[Dict[str, Any]] = []
 
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
@@ -396,10 +425,10 @@ def transcribe_and_align(
     has_local_whisper = importlib.util.find_spec("faster_whisper") is not None
 
     single_map: Dict[str, Tuple[str, Callable[[Path], List[Dict[str, Any]]]]] = {
+        "cloudflare": ("Cloudflare Workers AI Whisper", transcribe_cloudflare),
+        "gemini": ("Gemini (gemini-3.8-flash)", transcribe_gemini),
         "elevenlabs": ("ElevenLabs Scribe", transcribe_elevenlabs),
         "universal": ("Universal 3.5 Pro", transcribe_universal),
-        "gemini": ("Gemini (gemini-3.8-flash)", transcribe_gemini),
-        "grok": ("Grok STT", transcribe_grok),
     }
 
     used_engine = ""
@@ -415,12 +444,13 @@ def transcribe_and_align(
         raw_words = _run_with_one_retry(fn, wav_path)
         used_engine = label
     else:
-        # Auto sequence: ElevenLabs -> Universal -> Gemini -> Grok -> Faster-Whisper (offline)
+        # Auto sequence: Cloudflare Workers AI -> Gemini -> Faster-Whisper (offline)
+        cf_acc, cf_toks = _get_cf_credentials()
         pipeline: List[Tuple[str, bool, Callable[[Path], List[Dict[str, Any]]]]] = [
+            ("Cloudflare Workers AI Whisper", bool(cf_acc and cf_toks), transcribe_cloudflare),
+            ("Gemini (gemini-3.8-flash)", bool(keys.get("GEMINI_API_KEY")), transcribe_gemini),
             ("ElevenLabs Scribe", bool(keys.get("ELEVENLABS_API_KEY")), transcribe_elevenlabs),
             ("Universal 3.5 Pro", bool(keys.get("UNIVERSAL_3.5_PRO")), transcribe_universal),
-            ("Gemini (gemini-3.8-flash)", bool(keys.get("GEMINI_API_KEY")), transcribe_gemini),
-            ("Grok STT", bool(keys.get("GROK_API_KEY")), transcribe_grok),
         ]
 
         errors: List[str] = []
@@ -462,3 +492,71 @@ def transcribe_and_align(
         "mode": mode,
         "words": final_words,
     }
+
+
+def check_all_api_keys() -> List[Dict[str, Any]]:
+    """Test each configured API key with a lightweight read-only request."""
+    keys = load_api_keys()
+    results: List[Dict[str, Any]] = []
+
+    # 1. Cloudflare Workers AI tokens
+    cf_acc = keys.get("CF_ACCOUNT_ID", "").strip()
+    cf_token_names = [k for k in ("CF_ELEVENLABS_TOKEN", "CF_UNIVERSAL_TOKEN", "CF_API_TOKEN") if keys.get(k, "").strip()]
+    if not cf_acc or not cf_token_names:
+        results.append({"name": "Cloudflare Workers AI (CF_ACCOUNT_ID)", "ok": False, "status": "Not configured"})
+    else:
+        for k in cf_token_names:
+            tok = keys[k].strip()
+            try:
+                r = requests.get(
+                    f"https://api.cloudflare.com/client/v4/accounts/{cf_acc}/ai/models/search?per_page=1",
+                    headers={"Authorization": f"Bearer {tok}"},
+                    timeout=12,
+                )
+                if r.status_code == 200:
+                    results.append({"name": f"Cloudflare AI ({k})", "ok": True, "status": "Working"})
+                else:
+                    results.append({"name": f"Cloudflare AI ({k})", "ok": False, "status": f"Failed (HTTP {r.status_code})"})
+            except Exception as exc:
+                results.append({"name": f"Cloudflare AI ({k})", "ok": False, "status": f"Error: {exc}"})
+
+    # 3. Gemini 3.8 Flash
+    gem_key = keys.get("GEMINI_API_KEY", "").strip()
+    if not gem_key:
+        results.append({"name": "Gemini 3.8 Flash (GEMINI_API_KEY)", "ok": False, "status": "Not configured"})
+    else:
+        try:
+            from google import genai
+
+            client = genai.Client(api_key=gem_key)
+            client.models.get(model="gemini-3.8-flash")
+            results.append({"name": "Gemini 3.8 Flash (GEMINI_API_KEY)", "ok": True, "status": "Working"})
+        except Exception as exc:
+            results.append({"name": "Gemini 3.8 Flash (GEMINI_API_KEY)", "ok": False, "status": f"Failed ({exc})"})
+
+    # 4. Optional direct ElevenLabs / Universal keys (shown only if set)
+    el_key = keys.get("ELEVENLABS_API_KEY", "").strip()
+    if el_key:
+        try:
+            r = requests.get("https://api.elevenlabs.io/v1/user", headers={"xi-api-key": el_key}, timeout=12)
+            results.append({"name": "ElevenLabs Scribe (ELEVENLABS_API_KEY)", "ok": r.status_code == 200, "status": "Working" if r.status_code == 200 else f"Failed (HTTP {r.status_code})"})
+        except Exception as exc:
+            results.append({"name": "ElevenLabs Scribe (ELEVENLABS_API_KEY)", "ok": False, "status": f"Error: {exc}"})
+
+    uni_key = keys.get("UNIVERSAL_3.5_PRO", "").strip()
+    if uni_key:
+        try:
+            r = requests.get("https://api.assemblyai.com/v2/transcript?limit=1", headers={"authorization": uni_key}, timeout=12)
+            results.append({"name": "Universal 3.5 Pro (UNIVERSAL_3.5_PRO)", "ok": r.status_code == 200, "status": "Working" if r.status_code == 200 else f"Failed (HTTP {r.status_code})"})
+        except Exception as exc:
+            results.append({"name": "Universal 3.5 Pro (UNIVERSAL_3.5_PRO)", "ok": False, "status": f"Error: {exc}"})
+
+    # 5. Faster-Whisper (Offline Local)
+    has_local = importlib.util.find_spec("faster_whisper") is not None
+    results.append({
+        "name": "Faster-Whisper (Offline Local)",
+        "ok": has_local,
+        "status": "Available (Local PC)" if has_local else "Not installed (Cloud Mode)",
+    })
+
+    return results

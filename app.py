@@ -28,7 +28,7 @@ from styler import (
     enhance_emphasis_with_gemini,
     group_words_into_segments,
 )
-from transcriber import GeminiRetryableError, extract_wav_16k, transcribe_and_align
+from transcriber import GeminiRetryableError, check_all_api_keys, extract_wav_16k, transcribe_and_align
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 500 * 1024 * 1024  # 500 MB max upload
@@ -63,6 +63,11 @@ def update_settings():
         gemini_api_key=data.get("gemini_api_key", ""),
     )
     return jsonify({"ok": True, "configured": status})
+
+
+@app.route("/api/check-keys", methods=["POST"])
+def api_check_keys():
+    return jsonify({"results": check_all_api_keys()})
 
 
 @app.route("/api/transcribe", methods=["POST"])
