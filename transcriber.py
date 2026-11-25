@@ -226,7 +226,7 @@ def transcribe_grok(wav_path: Path) -> List[Dict[str, Any]]:
 
 def transcribe_local_whisper(wav_path: Path, model_size: str = "base") -> List[Dict[str, Any]]:
     """Transcribe audio locally with faster-whisper for exact word-level timestamps."""
-    from faster_whisper import WhisperModel
+    from faster_whisper import WhisperModel  # type: ignore[import-not-found]
 
     model = WhisperModel(model_size, device="cpu", compute_type="int8")
     segments, _ = model.transcribe(str(wav_path), word_timestamps=True)
