@@ -1,6 +1,24 @@
+
+# API keys and environment variables
 .env
+.env.*
+!.env.example
+
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+.venv/
+venv/
+
+# Node.js
+node_modules/
+dist/
+build/
+
+# Project files
+*.log
+
+# User uploads and generated outputs
 uploads/*
 outputs/*
 !uploads/.gitkeep
