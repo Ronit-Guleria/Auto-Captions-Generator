@@ -274,10 +274,10 @@ function renderSafeZoneOverlay() {
   if (mode === "reels" || mode === "shorts" || mode === "tiktok") {
     const label =
       mode === "reels"
-        ? "IG REELS SAFE ZONE (PREVIEW ONLY)"
+        ? "IG REELS SAFE ZONE"
         : mode === "shorts"
-        ? "YT SHORTS SAFE ZONE (PREVIEW ONLY)"
-        : "TIKTOK SAFE ZONE (PREVIEW ONLY)";
+        ? "YT SHORTS SAFE ZONE"
+        : "TIKTOK SAFE ZONE";
     const user = mode === "shorts" ? "@YourChannel" : "@yourhandle";
     ov.innerHTML = `
       <div class="sz-tag">${label}</div>
@@ -289,15 +289,15 @@ function renderSafeZoneOverlay() {
       </div>
       <div class="sz-bottom-meta">
         <div class="sz-user">${user}</div>
-        <div class="sz-desc">Video caption &amp; audio title area — avoid placing captions here</div>
+        <div class="sz-desc">Caption &amp; audio safe area</div>
       </div>
     `;
   } else if (mode === "youtube") {
     ov.innerHTML = `
-      <div class="sz-tag">YOUTUBE 16:9 PLAYER (PREVIEW ONLY)</div>
+      <div class="sz-tag">YOUTUBE 16:9 UI</div>
       <div class="sz-yt-bar">
         <div class="sz-yt-progress"></div>
-        <div style="display:flex;justify-content:space-between;font-size:10px;">
+        <div style="display:flex;justify-content:space-between;font-size:clamp(7px, 2.5cqw, 10px);">
           <span>&#9654; 0:42 / 3:15</span>
           <span>CC &nbsp; &#9881; &nbsp; &#9974;</span>
         </div>
