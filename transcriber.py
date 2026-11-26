@@ -75,47 +75,43 @@ def _interpolate_words_from_text(text: str, start: float, end: float) -> List[Di
     return words
 
 
-def _get_cf_credentials() -> Tuple[str, List[str]]:
-    keys = load_api_keys()
-    account_id = keys.get("CF_ACCOUNT_ID", "").strip()
-    tokens: List[str] = []
-    for k in ("CF_ELEVENLABS_TOKEN", "CF_UNIVERSAL_TOKEN", "CF_API_TOKEN"):
-        val = keys.get(k, "").strip()
-        if val and val not in tokens:
-            tokens.append(val)
-    return account_id, tokens
+HINGLISH_PROMPT = (
+    "Transcribe Hindi and English spoken words in Romanized Hinglish using ONLY English letters (a-z), "
+    "for example: Five Star ne Squid Game ke sath mil kar ek campaign launch kiya."
+)
 
 
-def transcribe_cloudflare(wav_path: Path) -> List[Dict[str, Any]]:
-    """Transcribe audio using Cloudflare Workers AI Whisper (trying CF_ELEVENLABS_TOKEN then CF_UNIVERSAL_TOKEN)."""
+def _run_cf_whisper(wav_path: Path, token: str, language_mode: str = "hinglish", script_hint: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Run Cloudflare Workers AI Whisper using a specific Cloudflare token."""
     import base64
 
-    account_id, tokens = _get_cf_credentials()
-    if not account_id or not tokens:
-        raise ValueError("CF_ACCOUNT_ID and at least one Cloudflare token are required.")
+    keys = load_api_keys()
+    account_id = keys.get("CF_ACCOUNT_ID", "").strip()
+    if not account_id or not token:
+        raise ValueError("CF_ACCOUNT_ID and Cloudflare token are required.")
 
     audio_bytes = wav_path.read_bytes()
     duration = get_audio_duration(wav_path)
     url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/@cf/openai/whisper-large-v3-turbo"
-    payload = {"audio": base64.b64encode(audio_bytes).decode("ascii")}
+    payload: Dict[str, Any] = {"audio": base64.b64encode(audio_bytes).decode("ascii")}
+    if script_hint and script_hint.strip():
+        payload["initial_prompt"] = script_hint.strip()[:600]
+        if re.search(r"[a-zA-Z]", script_hint):
+            payload["language"] = "en"
+    elif language_mode == "hinglish":
+        payload["language"] = "en"
+        payload["initial_prompt"] = HINGLISH_PROMPT
+    elif language_mode in ("en", "hi"):
+        payload["language"] = language_mode
 
-    last_exc: Exception | None = None
-    data: Dict[str, Any] = {}
-    for token in tokens:
-        try:
-            resp = requests.post(
-                url,
-                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-                json=payload,
-                timeout=120,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            break
-        except Exception as exc:
-            last_exc = exc
-    else:
-        raise RuntimeError(f"Cloudflare Workers AI failed across all tokens: {last_exc}") from last_exc
+    resp = requests.post(
+        url,
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        json=payload,
+        timeout=120,
+    )
+    resp.raise_for_status()
+    data = resp.json()
 
     result = data.get("result", data)
     words: List[Dict[str, Any]] = []
@@ -132,6 +128,24 @@ def transcribe_cloudflare(wav_path: Path) -> List[Dict[str, Any]]:
     if not words:
         raise RuntimeError("Cloudflare Workers AI returned no transcribed words.")
     return words
+
+
+def transcribe_cf_elevenlabs(wav_path: Path, language_mode: str = "hinglish", script_hint: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Transcribe via Cloudflare Workers AI using CF_ELEVENLABS_TOKEN."""
+    keys = load_api_keys()
+    token = keys.get("CF_ELEVENLABS_TOKEN", "").strip() or keys.get("CF_API_TOKEN", "").strip()
+    if not token:
+        raise ValueError("CF_ELEVENLABS_TOKEN is not set.")
+    return _run_cf_whisper(wav_path, token, language_mode=language_mode, script_hint=script_hint)
+
+
+def transcribe_cf_universal(wav_path: Path, language_mode: str = "hinglish", script_hint: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Transcribe via Cloudflare Workers AI using CF_UNIVERSAL_TOKEN."""
+    keys = load_api_keys()
+    token = keys.get("CF_UNIVERSAL_TOKEN", "").strip() or keys.get("CF_API_TOKEN", "").strip()
+    if not token:
+        raise ValueError("CF_UNIVERSAL_TOKEN is not set.")
+    return _run_cf_whisper(wav_path, token, language_mode=language_mode, script_hint=script_hint)
 
 
 def transcribe_elevenlabs(wav_path: Path) -> List[Dict[str, Any]]:
@@ -236,12 +250,28 @@ def transcribe_universal(wav_path: Path) -> List[Dict[str, Any]]:
     return words
 
 
-def transcribe_local_whisper(wav_path: Path, model_size: str = "base") -> List[Dict[str, Any]]:
+def transcribe_local_whisper(
+    wav_path: Path,
+    model_size: str = "base",
+    language_mode: str = "hinglish",
+    script_hint: Optional[str] = None,
+) -> List[Dict[str, Any]]:
     """Transcribe audio locally with faster-whisper for exact word-level timestamps."""
     from faster_whisper import WhisperModel  # type: ignore[import-not-found]
 
     model = WhisperModel(model_size, device="cpu", compute_type="int8")
-    segments, _ = model.transcribe(str(wav_path), word_timestamps=True)
+    kwargs: Dict[str, Any] = {"word_timestamps": True}
+    if script_hint and script_hint.strip():
+        kwargs["initial_prompt"] = script_hint.strip()[:600]
+        if re.search(r"[a-zA-Z]", script_hint):
+            kwargs["language"] = "en"
+    elif language_mode == "hinglish":
+        kwargs["language"] = "en"
+        kwargs["initial_prompt"] = HINGLISH_PROMPT
+    elif language_mode in ("en", "hi"):
+        kwargs["language"] = language_mode
+
+    segments, _ = model.transcribe(str(wav_path), **kwargs)
     words: List[Dict[str, Any]] = []
     for seg in segments:
         if getattr(seg, "words", None):
@@ -267,7 +297,7 @@ class GeminiRetryableError(RuntimeError):
     """Raised when Gemini fails (e.g. high demand/rate limit) and can be retried."""
 
 
-def transcribe_gemini(wav_path: Path) -> List[Dict[str, Any]]:
+def transcribe_gemini(wav_path: Path, language_mode: str = "hinglish") -> List[Dict[str, Any]]:
     """Transcribe audio using Gemini 3.8 Flash with word-level timestamps."""
     from google import genai
     from google.genai import types
@@ -279,8 +309,18 @@ def transcribe_gemini(wav_path: Path) -> List[Dict[str, Any]]:
 
     duration = get_audio_duration(wav_path)
     client = genai.Client(api_key=api_key)
+    lang_instruction = (
+        "Write all Hindi/Hinglish and English words in Romanized Hinglish using ONLY English letters (A-Z), NEVER Urdu/Arabic or Devanagari script. "
+        if language_mode == "hinglish"
+        else "Write Hindi words in Devanagari script. "
+        if language_mode == "hi"
+        else "Transcribe in English. "
+        if language_mode == "en"
+        else ""
+    )
     prompt = (
         f"Transcribe this audio (total duration {duration:.2f} seconds) word-by-word. "
+        f"{lang_instruction}"
         "Return ONLY a JSON array of objects with exact timestamps in seconds: "
         '[{"word": "Hello", "start": 0.10, "end": 0.42}, ...]. '
         "No markdown, no explanation."
@@ -396,6 +436,85 @@ def align_script_to_words(script_text: str, asr_words: List[Dict[str, Any]], tot
     return aligned
 
 
+_URDU_DEVANAGARI_MAP = {
+    # Urdu / Arabic script -> Romanized phonetic letters
+    "ا": "a", "آ": "aa", "أ": "a", "إ": "i", "ب": "b", "پ": "p", "ت": "t", "ٹ": "t",
+    "ث": "s", "ج": "j", "چ": "ch", "ح": "h", "خ": "kh", "د": "d", "ڈ": "d", "ذ": "z",
+    "ر": "r", "ڑ": "r", "ز": "z", "ژ": "zh", "س": "s", "ش": "sh", "ص": "s", "ض": "z",
+    "ط": "t", "ظ": "z", "ع": "a", "غ": "gh", "ف": "f", "ق": "q", "ک": "k", "گ": "g",
+    "ل": "l", "م": "m", "ن": "n", "ں": "n", "و": "o", "ہ": "h", "ھ": "h", "ء": "",
+    "ی": "i", "ے": "e", "ئ": "i", "ؤ": "o", "ة": "h", "ى": "a",
+    "َ": "a", "ِ": "i", "ُ": "u", "ً": "an", "ٍ": "in", "ٌ": "un", "ْ": "", "ّ": "", "ٰ": "a",
+    # Devanagari -> Romanized phonetic letters
+    "अ": "a", "आ": "aa", "इ": "i", "ई": "ee", "उ": "u", "ऊ": "oo", "ए": "e", "ऐ": "ai",
+    "ओ": "o", "औ": "au", "क": "k", "ख": "kh", "ग": "g", "घ": "gh", "च": "ch", "छ": "chh",
+    "ज": "j", "झ": "jh", "ट": "t", "ठ": "th", "ड": "d", "ढ": "dh", "ण": "n", "त": "t",
+    "थ": "th", "द": "d", "ध": "dh", "न": "n", "प": "p", "फ": "ph", "ब": "b", "भ": "bh",
+    "म": "m", "य": "y", "र": "r", "ल": "l", "व": "v", "श": "sh", "ष": "sh", "स": "s",
+    "ह": "h", "ा": "a", "ि": "i", "ी": "ee", "ु": "u", "ू": "oo", "े": "e", "ै": "ai",
+    "ो": "o", "ौ": "au", "ं": "n", "ँ": "n", "्": "", "ः": "h",
+}
+
+
+def _fallback_romanize(text: str) -> str:
+    out = []
+    for ch in text:
+        if ch in _URDU_DEVANAGARI_MAP:
+            out.append(_URDU_DEVANAGARI_MAP[ch])
+        elif ord(ch) < 128:
+            out.append(ch)
+    res = "".join(out).strip()
+    return res if res else text
+
+
+def _transliterate_words_to_hinglish(words: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    If ASR returned Urdu/Arabic or Devanagari words while language_mode='hinglish',
+    transliterate them 1-to-1 into Romanized Hinglish (English letters) via Gemini
+    (with an instant offline phonetic fallback if Gemini is busy) while preserving
+    100% of the original word timestamps.
+    """
+    if not words:
+        return words
+    has_non_ascii = any(re.search(r"[^\x00-\x7F]", w["word"]) for w in words)
+    if not has_non_ascii:
+        return words
+
+    keys = load_api_keys()
+    gem_key = keys.get("GEMINI_API_KEY", "").strip()
+    if gem_key:
+        try:
+            from google import genai
+
+            client = genai.Client(api_key=gem_key)
+            raw_list = [w["word"] for w in words]
+            prompt = (
+                f"Transliterate each of these {len(raw_list)} Urdu/Hindi words 1-to-1 into natural Romanized Hinglish "
+                "(using ONLY English letters A-Z and punctuation, e.g. 'ایک' -> 'Ek', 'آدمی' -> 'aadmi', 'نے' -> 'ne'). "
+                f"Return ONLY a JSON array of strings of exact length {len(raw_list)}.\n\n"
+                + json.dumps(raw_list, ensure_ascii=False)
+            )
+            resp = client.models.generate_content(model="gemini-3.8-flash", contents=prompt)
+            raw = (resp.text or "").strip()
+            match = re.search(r"\[.*\]", raw, re.DOTALL)
+            if match:
+                converted = json.loads(match.group(0))
+                if isinstance(converted, list) and len(converted) == len(words):
+                    for w, new_tok in zip(words, converted):
+                        cleaned = str(new_tok).strip()
+                        if cleaned:
+                            w["word"] = cleaned
+                    return words
+        except Exception:
+            pass
+
+    # Deterministic offline fallback so Urdu/Devanagari never leaks into Hinglish mode
+    for w in words:
+        if re.search(r"[^\x00-\x7F]", w["word"]):
+            w["word"] = _fallback_romanize(w["word"])
+    return words
+
+
 def _run_with_one_retry(fn: Callable[[Path], List[Dict[str, Any]]], wav_path: Path) -> List[Dict[str, Any]]:
     """Try a transcription provider once, and on failure retry once before raising."""
     try:
@@ -409,14 +528,14 @@ def transcribe_and_align(
     wav_path: Path,
     engine: str = "auto",
     script_text: Optional[str] = None,
+    language_mode: str = "hinglish",
 ) -> Dict[str, Any]:
     """
     Transcribe voiceover in ordered fallback sequence:
-    1. ElevenLabs Scribe
-    2. Universal 3.5 Pro
+    1. Cloudflare AI (ElevenLabs Token)
+    2. Cloudflare AI (Universal 3.5 Pro Token)
     3. Gemini (gemini-3.8-flash)
-    4. Grok STT
-    5. Faster-Whisper (offline mode only, when installed)
+    4. Faster-Whisper (offline mode only, when installed)
 
     Each cloud model retries once before shifting to the next model.
     """
@@ -424,9 +543,14 @@ def transcribe_and_align(
     keys = load_api_keys()
     has_local_whisper = importlib.util.find_spec("faster_whisper") is not None
 
+    cf_el_fn = lambda p: transcribe_cf_elevenlabs(p, language_mode=language_mode, script_hint=script_text)
+    cf_uni_fn = lambda p: transcribe_cf_universal(p, language_mode=language_mode, script_hint=script_text)
+    gem_fn = lambda p: transcribe_gemini(p, language_mode=language_mode)
+
     single_map: Dict[str, Tuple[str, Callable[[Path], List[Dict[str, Any]]]]] = {
-        "cloudflare": ("Cloudflare Workers AI Whisper", transcribe_cloudflare),
-        "gemini": ("Gemini (gemini-3.8-flash)", transcribe_gemini),
+        "cf_elevenlabs": ("Cloudflare AI (ElevenLabs Token)", cf_el_fn),
+        "cf_universal": ("Cloudflare AI (Universal 3.5 Pro Token)", cf_uni_fn),
+        "gemini": ("Gemini (gemini-3.8-flash)", gem_fn),
         "elevenlabs": ("ElevenLabs Scribe", transcribe_elevenlabs),
         "universal": ("Universal 3.5 Pro", transcribe_universal),
     }
@@ -437,18 +561,21 @@ def transcribe_and_align(
     if engine == "local":
         if not has_local_whisper:
             raise ValueError("Faster-Whisper is not installed on cloud hosting.")
-        raw_words = transcribe_local_whisper(wav_path)
+        raw_words = transcribe_local_whisper(wav_path, language_mode=language_mode, script_hint=script_text)
         used_engine = "Faster-Whisper (Offline)"
     elif engine in single_map:
         label, fn = single_map[engine]
         raw_words = _run_with_one_retry(fn, wav_path)
         used_engine = label
     else:
-        # Auto sequence: Cloudflare Workers AI -> Gemini -> Faster-Whisper (offline)
-        cf_acc, cf_toks = _get_cf_credentials()
+        # Auto sequence: CF ElevenLabs -> CF Universal -> Gemini -> Faster-Whisper (offline)
+        cf_acc = keys.get("CF_ACCOUNT_ID", "").strip()
+        has_cf_el = bool(cf_acc and (keys.get("CF_ELEVENLABS_TOKEN") or keys.get("CF_API_TOKEN")))
+        has_cf_uni = bool(cf_acc and (keys.get("CF_UNIVERSAL_TOKEN") or keys.get("CF_API_TOKEN")))
         pipeline: List[Tuple[str, bool, Callable[[Path], List[Dict[str, Any]]]]] = [
-            ("Cloudflare Workers AI Whisper", bool(cf_acc and cf_toks), transcribe_cloudflare),
-            ("Gemini (gemini-3.8-flash)", bool(keys.get("GEMINI_API_KEY")), transcribe_gemini),
+            ("Cloudflare AI (ElevenLabs Token)", has_cf_el, cf_el_fn),
+            ("Cloudflare AI (Universal 3.5 Pro Token)", has_cf_uni, cf_uni_fn),
+            ("Gemini (gemini-3.8-flash)", bool(keys.get("GEMINI_API_KEY")), gem_fn),
             ("ElevenLabs Scribe", bool(keys.get("ELEVENLABS_API_KEY")), transcribe_elevenlabs),
             ("Universal 3.5 Pro", bool(keys.get("UNIVERSAL_3.5_PRO")), transcribe_universal),
         ]
@@ -483,6 +610,8 @@ def transcribe_and_align(
         final_words = align_script_to_words(script_text, raw_words, duration)
         mode = "script_synced"
     else:
+        if language_mode == "hinglish":
+            raw_words = _transliterate_words_to_hinglish(raw_words)
         final_words = raw_words
         mode = "voiceover_only"
 

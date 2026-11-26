@@ -5,7 +5,7 @@ import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from config import ASPECT_RATIOS, BACKGROUND_MODES, resolve_font
 from styler import CAPTION_STYLES
@@ -70,33 +70,63 @@ def render_caption_frame(
     v_align: str = "center",
     h_align: str = "center",
     font_size: int = 72,
+    font_role: Optional[str] = None,
     offset_x_pct: float = 0.0,
     offset_y_pct: float = 0.0,
+    text_color: Optional[str] = None,
+    accent_color: Optional[str] = None,
+    pill_color: Optional[str] = None,
+    glow_enabled: bool = False,
+    glow_active_only: bool = False,
+    glow_match_active: bool = True,
+    glow_color: Optional[str] = None,
+    glow_intensity: float = 16.0,
+    shadow_enabled: Optional[bool] = None,
+    shadow_intensity: float = 60.0,
 ) -> Image.Image:
-    """Render a single RGBA frame with the active caption segment and style."""
+    """Render a single RGBA frame with the active caption segment, custom colors, glow, and shadow."""
     img = Image.new("RGBA", (width, height), bg_rgba)
     if segment is None or not segment.get("words"):
         return img
 
-    style = CAPTION_STYLES.get(style_id, CAPTION_STYLES["purple_pill"])
+    style = dict(CAPTION_STYLES.get(style_id, CAPTION_STYLES["purple_pill"]))
+    if font_role:
+        style["font_role"] = font_role
+        style["accent_font_role"] = font_role
+    if text_color:
+        style["text_color"] = text_color
+    if accent_color:
+        style["accent_color"] = accent_color
+    if pill_color:
+        style["pill_color"] = pill_color
+    if shadow_enabled is not None:
+        style["shadow"] = shadow_enabled
+
     draw = ImageDraw.Draw(img, "RGBA")
+    glow_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0)) if (glow_enabled and glow_intensity > 0) else None
+    glow_draw = ImageDraw.Draw(glow_layer, "RGBA") if glow_layer is not None else None
 
     words = segment["words"]
     emp_idx = segment.get("emphasis_index", 0)
     mode_type = style["mode_type"]
+    anim = style.get("animation", "pop")
 
-    # Determine which word gets accent styling
-    highlight_idx = active_word_idx if (mode_type == "word_pill" and active_word_idx >= 0) else emp_idx
+    # Track active spoken word for ALL animated styles (fallback to emphasis_index)
+    highlight_idx = active_word_idx if active_word_idx >= 0 else emp_idx
 
     base_font = _load_font(style["font_role"], font_size)
-    accent_font = _load_font(style["accent_font_role"], int(font_size * 1.06))
+    pop_scale = 1.12 if anim == "pop" else 1.06
+    accent_font = _load_font(style["accent_font_role"], int(font_size * pop_scale))
 
     texts: List[str] = []
     fonts: List[ImageFont.FreeTypeFont | ImageFont.ImageFont] = []
     for i, w in enumerate(words):
         txt = w["word"].upper() if style["uppercase"] else w["word"]
         texts.append(txt)
-        fonts.append(accent_font if (i == highlight_idx and style["accent_font_role"] != style["font_role"]) else base_font)
+        use_accent_font = (i == highlight_idx) and (
+            style["accent_font_role"] != style["font_role"] or anim == "pop"
+        )
+        fonts.append(accent_font if use_accent_font else base_font)
 
     space_px = max(12, int(font_size * 0.28))
     max_text_width = int(width * 0.84)
@@ -191,6 +221,11 @@ def render_caption_frame(
             fnt = fonts[idx]
             is_hl = idx == highlight_idx
 
+            # Skip unrevealed words in 'reveal' mode
+            if mode_type == "reveal" and active_word_idx >= 0 and idx > active_word_idx:
+                cur_x += ww + space_px
+                continue
+
             # Per-word rounded pill (symmetrical around actual inked glyphs)
             if mode_type == "word_pill" and is_hl and style.get("pill_color"):
                 pad_x = int(font_size * 0.24)
@@ -206,16 +241,30 @@ def render_caption_frame(
                     fill=_hex_to_rgba(style["pill_color"]),
                 )
 
-            fill_col = accent_rgba if (is_hl and mode_type != "stacked_bg") else text_rgba
+            if mode_type == "karaoke" and active_word_idx >= 0:
+                fill_col = accent_rgba if idx <= active_word_idx else text_rgba
+            else:
+                fill_col = accent_rgba if (is_hl and mode_type != "stacked_bg") else text_rgba
 
-            # Soft drop shadow
-            if style.get("shadow"):
-                sh_off = max(2, int(font_size * 0.05))
+            if glow_draw is not None and (not glow_active_only or is_hl):
+                if glow_match_active:
+                    g_col = (accent_rgba[0], accent_rgba[1], accent_rgba[2], 220)
+                elif glow_color:
+                    gc = _hex_to_rgba(glow_color)
+                    g_col = (gc[0], gc[1], gc[2], 220)
+                else:
+                    g_col = (fill_col[0], fill_col[1], fill_col[2], 220)
+                glow_draw.text((cur_x, cur_y), txt, font=fnt, fill=g_col)
+
+            # Soft drop shadow with customizable intensity
+            if style.get("shadow") and shadow_intensity > 0:
+                sh_alpha = int(max(0, min(255, (shadow_intensity / 100.0) * 240)))
+                sh_off = max(2, int(font_size * (0.02 + 0.06 * (shadow_intensity / 100.0))))
                 draw.text(
                     (cur_x + sh_off, cur_y + sh_off),
                     txt,
                     font=fnt,
-                    fill=(0, 0, 0, 150),
+                    fill=(0, 0, 0, sh_alpha),
                 )
 
             # Main word text (with optional stroke)
@@ -229,6 +278,10 @@ def render_caption_frame(
             )
             cur_x += ww + space_px
         cur_y += lh + line_gap
+
+    if glow_layer is not None:
+        blurred = glow_layer.filter(ImageFilter.GaussianBlur(radius=max(1.0, glow_intensity * 0.45)))
+        img = Image.alpha_composite(blurred, img)
 
     return img
 
@@ -262,12 +315,23 @@ def render_caption_video(
     style_id: str = "purple_pill",
     aspect_ratio: str = "9:16",
     bg_mode: str = "transparent_mov",
-    v_align: str = "bottom",
+    v_align: str = "center",
     h_align: str = "center",
     font_size: int = 72,
+    font_role: Optional[str] = None,
     offset_x_pct: float = 0.0,
     offset_y_pct: float = 0.0,
     fps: int = 30,
+    text_color: Optional[str] = None,
+    accent_color: Optional[str] = None,
+    pill_color: Optional[str] = None,
+    glow_enabled: bool = False,
+    glow_active_only: bool = False,
+    glow_match_active: bool = True,
+    glow_color: Optional[str] = None,
+    glow_intensity: float = 16.0,
+    shadow_enabled: Optional[bool] = None,
+    shadow_intensity: float = 60.0,
 ) -> Path:
     """
     Render styled captions into a video file using cached RGBA states piped to FFmpeg.
@@ -346,8 +410,19 @@ def render_caption_video(
                     v_align=v_align,
                     h_align=h_align,
                     font_size=font_size,
+                    font_role=font_role,
                     offset_x_pct=offset_x_pct,
                     offset_y_pct=offset_y_pct,
+                    text_color=text_color,
+                    accent_color=accent_color,
+                    pill_color=pill_color,
+                    glow_enabled=glow_enabled,
+                    glow_active_only=glow_active_only,
+                    glow_match_active=glow_match_active,
+                    glow_color=glow_color,
+                    glow_intensity=glow_intensity,
+                    shadow_enabled=shadow_enabled,
+                    shadow_intensity=shadow_intensity,
                 )
                 state_cache[key] = frame_img.tobytes()
             proc.stdin.write(state_cache[key])

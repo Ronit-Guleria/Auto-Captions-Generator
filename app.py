@@ -28,7 +28,7 @@ from styler import (
     enhance_emphasis_with_gemini,
     group_words_into_segments,
 )
-from transcriber import GeminiRetryableError, check_all_api_keys, extract_wav_16k, transcribe_and_align
+from transcriber import GeminiRetryableError, _transliterate_words_to_hinglish, check_all_api_keys, extract_wav_16k, transcribe_and_align
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 500 * 1024 * 1024  # 500 MB max upload
@@ -87,12 +87,13 @@ def api_transcribe():
 
     script_text = request.form.get("script", "")
     engine = request.form.get("engine", "auto")
+    language_mode = request.form.get("language_mode", "hinglish")
     chunk_mode = request.form.get("chunk_mode", "three_word")
     use_gemini = request.form.get("use_gemini", "true").lower() == "true"
 
     try:
         extract_wav_16k(raw_path, wav_path)
-        result = transcribe_and_align(wav_path, engine=engine, script_text=script_text)
+        result = transcribe_and_align(wav_path, engine=engine, script_text=script_text, language_mode=language_mode)
         segments = group_words_into_segments(result["words"], chunk_mode=chunk_mode)
         if use_gemini:
             segments = enhance_emphasis_with_gemini(segments)
@@ -133,6 +134,20 @@ def api_regroup():
     if use_gemini:
         segments = enhance_emphasis_with_gemini(segments)
     return jsonify({"segments": segments})
+
+
+@app.route("/api/to-hinglish", methods=["POST"])
+def api_to_hinglish():
+    data = request.get_json(force=True) or {}
+    words = data.get("words", [])
+    chunk_mode = data.get("chunk_mode", "three_word")
+    use_gemini = bool(data.get("use_gemini", True))
+
+    converted_words = _transliterate_words_to_hinglish(words)
+    segments = group_words_into_segments(converted_words, chunk_mode=chunk_mode)
+    if use_gemini:
+        segments = enhance_emphasis_with_gemini(segments)
+    return jsonify({"words": converted_words, "segments": segments})
 
 
 @app.route("/api/preview-frame", methods=["POST"])
@@ -247,12 +262,23 @@ def api_render_video():
             style_id=data.get("style_id", "purple_pill"),
             aspect_ratio=data.get("aspect_ratio", "9:16"),
             bg_mode=bg_mode,
-            v_align=data.get("v_align", "bottom"),
+            v_align=data.get("v_align", "center"),
             h_align=data.get("h_align", "center"),
             font_size=int(data.get("font_size", 76)),
+            font_role=data.get("font_role") or None,
             offset_x_pct=float(data.get("offset_x_pct", 0.0)),
             offset_y_pct=float(data.get("offset_y_pct", 0.0)),
             fps=int(data.get("fps", 30)),
+            text_color=data.get("text_color") or None,
+            accent_color=data.get("accent_color") or None,
+            pill_color=data.get("pill_color") or None,
+            glow_enabled=bool(data.get("glow_enabled", False)),
+            glow_active_only=bool(data.get("glow_active_only", False)),
+            glow_match_active=bool(data.get("glow_match_active", True)),
+            glow_color=data.get("glow_color") or None,
+            glow_intensity=float(data.get("glow_intensity", 16.0)),
+            shadow_enabled=data.get("shadow_enabled"),
+            shadow_intensity=float(data.get("shadow_intensity", 60.0)),
         )
         return jsonify({"filename": filename, "download_url": f"/api/download/{filename}"})
     except Exception as exc:

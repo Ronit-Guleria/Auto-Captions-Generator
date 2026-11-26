@@ -59,25 +59,49 @@ const els = {
   retryGeminiBtn: document.getElementById("retryGeminiBtn"),
   switchWhisperBtn: document.getElementById("switchWhisperBtn"),
   engineSelect: document.getElementById("engineSelect"),
+  languageSelect: document.getElementById("languageSelect"),
   chunkModeSelect: document.getElementById("chunkModeSelect"),
   useGeminiCheck: document.getElementById("useGeminiCheck"),
   syncBtn: document.getElementById("syncBtn"),
   syncStatus: document.getElementById("syncStatus"),
 
   segCount: document.getElementById("segCount"),
+  convertHinglishBtn: document.getElementById("convertHinglishBtn"),
   segmentsList: document.getElementById("segmentsList"),
 
   safeZoneSelect: document.getElementById("safeZoneSelect"),
   aspectSelect: document.getElementById("aspectSelect"),
   bgModeSelect: document.getElementById("bgModeSelect"),
+  fontRoleSelect: document.getElementById("fontRoleSelect"),
   vAlignSelect: document.getElementById("vAlignSelect"),
   hAlignSelect: document.getElementById("hAlignSelect"),
   fontSizeSlider: document.getElementById("fontSizeSlider"),
   fontSizeVal: document.getElementById("fontSizeVal"),
+  resetFontSizeBtn: document.getElementById("resetFontSizeBtn"),
   offsetXSlider: document.getElementById("offsetXSlider"),
   offsetXVal: document.getElementById("offsetXVal"),
+  resetOffsetXBtn: document.getElementById("resetOffsetXBtn"),
   offsetYSlider: document.getElementById("offsetYSlider"),
   offsetYVal: document.getElementById("offsetYVal"),
+  resetOffsetYBtn: document.getElementById("resetOffsetYBtn"),
+
+  textColorPicker: document.getElementById("textColorPicker"),
+  accentColorPicker: document.getElementById("accentColorPicker"),
+  pillColorPicker: document.getElementById("pillColorPicker"),
+  resetColorsBtn: document.getElementById("resetColorsBtn"),
+  quickSwatches: document.getElementById("quickSwatches"),
+
+  glowCheck: document.getElementById("glowCheck"),
+  glowColorPicker: document.getElementById("glowColorPicker"),
+  glowMatchActiveCheck: document.getElementById("glowMatchActiveCheck"),
+  glowActiveOnlyCheck: document.getElementById("glowActiveOnlyCheck"),
+  glowSlider: document.getElementById("glowSlider"),
+  glowVal: document.getElementById("glowVal"),
+  resetGlowBtn: document.getElementById("resetGlowBtn"),
+  shadowCheck: document.getElementById("shadowCheck"),
+  shadowSlider: document.getElementById("shadowSlider"),
+  shadowVal: document.getElementById("shadowVal"),
+  resetShadowBtn: document.getElementById("resetShadowBtn"),
 
   styleGrid: document.getElementById("styleGrid"),
   previewStage: document.querySelector(".preview-stage"),
@@ -112,6 +136,7 @@ async function init() {
     });
     els.engineSelect.value = "auto";
   }
+  syncStyleControlsToPreset(state.styleId);
   renderStyleGrid();
   bindEvents();
   fitPreviewBox();
@@ -129,6 +154,15 @@ function updateKeyBadge(keys) {
   els.keyStatusBadge.textContent = keys.gemini ? "Gemini API OK" : "No Gemini Key";
 }
 
+function syncStyleControlsToPreset(styleId) {
+  const st = state.styles[styleId];
+  if (!st) return;
+  els.textColorPicker.value = (st.text_color || "#FFFFFF").slice(0, 7);
+  els.accentColorPicker.value = (st.accent_color || "#FFE600").slice(0, 7);
+  els.pillColorPicker.value = (st.pill_color || "#5B42F3").slice(0, 7);
+  els.shadowCheck.checked = Boolean(st.shadow);
+}
+
 function renderStyleGrid() {
   els.styleGrid.innerHTML = "";
   Object.values(state.styles).forEach((st) => {
@@ -140,7 +174,9 @@ function renderStyleGrid() {
     `;
     card.addEventListener("click", () => {
       state.styleId = st.id;
-      renderStyleGrid();
+      syncStyleControlsToPreset(st.id);
+      syncStyleControlsToPreset(state.styleId);
+  renderStyleGrid();
       drawCanvasAtTime(state.currentTime);
     });
     els.styleGrid.appendChild(card);
@@ -241,6 +277,38 @@ function bindEvents() {
   els.closeRetryBtn.addEventListener("click", () => els.retryModal.classList.add("hidden"));
   els.syncBtn.addEventListener("click", () => handleSync(null, 0));
 
+  els.convertHinglishBtn.addEventListener("click", async () => {
+    if (!state.words.length) {
+      els.syncStatus.textContent = "Sync a voiceover first, then click Convert to Hinglish.";
+      return;
+    }
+    els.convertHinglishBtn.disabled = true;
+    els.convertHinglishBtn.textContent = "Converting...";
+    try {
+      const res = await fetch("/api/to-hinglish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          words: state.words,
+          chunk_mode: els.chunkModeSelect.value,
+          use_gemini: els.useGeminiCheck.checked,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Conversion failed");
+      state.words = data.words || state.words;
+      state.segments = data.segments || state.segments;
+      renderSegmentsList();
+      drawCanvasAtTime(state.currentTime);
+      els.syncStatus.textContent = "Converted captions to Hinglish (English letters).";
+    } catch (err) {
+      els.syncStatus.textContent = `Error: ${err.message}`;
+    } finally {
+      els.convertHinglishBtn.disabled = false;
+      els.convertHinglishBtn.textContent = "Convert to Hinglish";
+    }
+  });
+
   els.chunkModeSelect.addEventListener("change", async () => {
     if (!state.words.length) return;
     const res = await fetch("/api/regroup", {
@@ -266,7 +334,7 @@ function bindEvents() {
 
   els.safeZoneSelect.addEventListener("change", renderSafeZoneOverlay);
 
-  [els.bgModeSelect, els.vAlignSelect, els.hAlignSelect].forEach((el) =>
+  [els.bgModeSelect, els.fontRoleSelect, els.vAlignSelect, els.hAlignSelect].forEach((el) =>
     el.addEventListener("change", () => drawCanvasAtTime(state.currentTime))
   );
 
@@ -280,6 +348,75 @@ function bindEvents() {
   });
   els.offsetYSlider.addEventListener("input", () => {
     els.offsetYVal.textContent = els.offsetYSlider.value;
+    drawCanvasAtTime(state.currentTime);
+  });
+
+  els.resetFontSizeBtn.addEventListener("click", () => {
+    els.fontSizeSlider.value = 76;
+    els.fontSizeVal.textContent = "76";
+    drawCanvasAtTime(state.currentTime);
+  });
+  els.resetOffsetXBtn.addEventListener("click", () => {
+    els.offsetXSlider.value = 0;
+    els.offsetXVal.textContent = "0";
+    drawCanvasAtTime(state.currentTime);
+  });
+  els.resetOffsetYBtn.addEventListener("click", () => {
+    els.offsetYSlider.value = 0;
+    els.offsetYVal.textContent = "0";
+    drawCanvasAtTime(state.currentTime);
+  });
+
+  // Color & Effect Controls
+  [els.textColorPicker, els.accentColorPicker, els.pillColorPicker].forEach((el) =>
+    el.addEventListener("input", () => drawCanvasAtTime(state.currentTime))
+  );
+  els.resetColorsBtn.addEventListener("click", () => {
+    syncStyleControlsToPreset(state.styleId);
+    drawCanvasAtTime(state.currentTime);
+  });
+  els.quickSwatches.querySelectorAll(".swatch").forEach((sw) => {
+    sw.addEventListener("click", () => {
+      const col = sw.dataset.color;
+      const st = state.styles[state.styleId];
+      if (st && st.mode_type === "word_pill") {
+        els.pillColorPicker.value = col;
+      } else {
+        els.accentColorPicker.value = col;
+      }
+      drawCanvasAtTime(state.currentTime);
+    });
+  });
+
+  els.glowCheck.addEventListener("change", () => drawCanvasAtTime(state.currentTime));
+  els.glowColorPicker.addEventListener("input", () => drawCanvasAtTime(state.currentTime));
+  els.glowMatchActiveCheck.addEventListener("change", () => drawCanvasAtTime(state.currentTime));
+  els.glowActiveOnlyCheck.addEventListener("change", () => drawCanvasAtTime(state.currentTime));
+  els.glowSlider.addEventListener("input", () => {
+    els.glowVal.textContent = els.glowSlider.value;
+    drawCanvasAtTime(state.currentTime);
+  });
+  els.shadowCheck.addEventListener("change", () => drawCanvasAtTime(state.currentTime));
+  els.shadowSlider.addEventListener("input", () => {
+    els.shadowVal.textContent = els.shadowSlider.value;
+    drawCanvasAtTime(state.currentTime);
+  });
+
+  els.resetGlowBtn.addEventListener("click", () => {
+    els.glowCheck.checked = false;
+    els.glowMatchActiveCheck.checked = true;
+    els.glowActiveOnlyCheck.checked = false;
+    els.glowColorPicker.value = "#FFE600";
+    els.glowSlider.value = 16;
+    els.glowVal.textContent = "16";
+    drawCanvasAtTime(state.currentTime);
+  });
+
+  els.resetShadowBtn.addEventListener("click", () => {
+    const st = state.styles[state.styleId];
+    els.shadowCheck.checked = st ? Boolean(st.shadow) : true;
+    els.shadowSlider.value = 60;
+    els.shadowVal.textContent = "60";
     drawCanvasAtTime(state.currentTime);
   });
 
@@ -503,6 +640,7 @@ async function handleSync(overrideEngine = null, retryAttempt = 0) {
   const form = new FormData();
   form.append("file", file);
   form.append("engine", chosenEngine);
+  form.append("language_mode", els.languageSelect.value);
   form.append("chunk_mode", els.chunkModeSelect.value);
   form.append("use_gemini", els.useGeminiCheck.checked ? "true" : "false");
   if (state.inputMode === "script") {
@@ -617,6 +755,8 @@ function getFontCss(role, sizePx) {
   if (role === "condensed") return `900 ${sizePx}px Impact, "Arial Narrow", sans-serif`;
   if (role === "serif_italic") return `italic 700 ${sizePx}px Georgia, "Times New Roman", serif`;
   if (role === "serif_bold") return `700 ${sizePx}px Georgia, "Times New Roman", serif`;
+  if (role === "script") return `italic 700 ${sizePx}px "Segoe Script", "Comic Sans MS", cursive`;
+  if (role === "sans_regular") return `600 ${sizePx}px "Segoe UI", Arial, sans-serif`;
   return `800 ${sizePx}px "Segoe UI", Arial, sans-serif`;
 }
 
@@ -670,8 +810,18 @@ function drawCanvasAtTime(t) {
   }
   if (!seg || !seg.words || !seg.words.length) return;
 
-  const style = state.styles[state.styleId] || Object.values(state.styles)[0];
-  if (!style) return;
+  const baseStyle = state.styles[state.styleId] || Object.values(state.styles)[0];
+  if (!baseStyle) return;
+  const fontOverride = els.fontRoleSelect.value;
+  const style = {
+    ...baseStyle,
+    font_role: fontOverride !== "default" ? fontOverride : baseStyle.font_role,
+    accent_font_role: fontOverride !== "default" ? fontOverride : baseStyle.accent_font_role,
+    text_color: els.textColorPicker.value || baseStyle.text_color,
+    accent_color: els.accentColorPicker.value || baseStyle.accent_color,
+    pill_color: baseStyle.pill_color ? (els.pillColorPicker.value || baseStyle.pill_color) : null,
+    shadow: els.shadowCheck.checked,
+  };
 
   const fontSize = Number(els.fontSizeSlider.value);
   const vAlign = els.vAlignSelect.value;
@@ -679,8 +829,22 @@ function drawCanvasAtTime(t) {
   const offX = (Number(els.offsetXSlider.value) / 100) * W;
   const offY = (Number(els.offsetYSlider.value) / 100) * H;
   const empIdx = seg.emphasis_index ?? 0;
-  const highlightIdx =
-    style.mode_type === "word_pill" && activeWordIdx >= 0 ? activeWordIdx : empIdx;
+  const anim = style.animation || "pop";
+  const highlightIdx = activeWordIdx >= 0 ? activeWordIdx : empIdx;
+
+  // Compute smooth entrance progress (slide_up / pop)
+  const segElapsed = Math.max(0, t - seg.start);
+  const segProgress = Math.min(1, segElapsed / 0.14);
+  const slideOffset = anim === "slide_up" ? (1 - segProgress) * 22 : 0;
+  const segAlpha = anim === "slide_up" ? 0.25 + 0.75 * segProgress : 1.0;
+
+  let activePopScale = 1.0;
+  if (anim === "pop" && activeWordIdx >= 0 && seg.words[activeWordIdx]) {
+    const wElapsed = Math.max(0, t - seg.words[activeWordIdx].start);
+    const wProg = Math.min(1, wElapsed / 0.12);
+    // Smooth bounce: 1.18 -> 1.0
+    activePopScale = 1.0 + 0.18 * (1 - wProg);
+  }
 
   const words = seg.words;
   const texts = words.map((w) => (style.uppercase ? w.word.toUpperCase() : w.word));
@@ -723,7 +887,10 @@ function drawCanvasAtTime(t) {
   if (vAlign === "top") baseY = H * 0.12;
   else if (vAlign === "center") baseY = (H - totalH) / 2;
   else baseY = H * 0.72 - totalH / 2;
-  baseY += offY;
+  baseY += offY + slideOffset;
+
+  ctx.save();
+  ctx.globalAlpha = segAlpha;
 
   const marginX = W * 0.08;
   const getLineX = (lw) => {
@@ -739,9 +906,9 @@ function drawCanvasAtTime(t) {
     const bw = ctx.measureText(bgWord).width;
     ctx.textBaseline = "middle";
     ctx.fillStyle = style.accent_color;
-    ctx.globalAlpha = 0.9;
+    ctx.globalAlpha = 0.9 * segAlpha;
     ctx.fillText(bgWord, getLineX(bw), baseY + lineH * 0.35);
-    ctx.globalAlpha = 1.0;
+    ctx.globalAlpha = segAlpha;
   }
 
   if (style.mode_type === "full_box" && style.pill_color) {
@@ -759,8 +926,22 @@ function drawCanvasAtTime(t) {
   lines.forEach((ln, lIdx) => {
     let curX = getLineX(lineWidths[lIdx]);
     ln.forEach(({ i, txt, ww, font }) => {
+      if (style.mode_type === "reveal" && activeWordIdx >= 0 && i > activeWordIdx) {
+        curX += ww + spacePx;
+        return;
+      }
+
       const isHl = i === highlightIdx;
       ctx.font = font;
+
+      const wordScale = isHl && anim === "pop" ? activePopScale : 1.0;
+      const cx = curX + ww / 2;
+      ctx.save();
+      if (wordScale !== 1.0) {
+        ctx.translate(cx, curY);
+        ctx.scale(wordScale, wordScale);
+        ctx.translate(-cx, -curY);
+      }
 
       if (style.mode_type === "word_pill" && isHl && style.pill_color) {
         const padX = fontSize * 0.24;
@@ -777,9 +958,10 @@ function drawCanvasAtTime(t) {
         ctx.fill();
       }
 
-      if (style.shadow) {
-        const sh = Math.max(2, fontSize * 0.05);
-        ctx.fillStyle = "rgba(0,0,0,0.6)";
+      const shadowAlpha = (Number(els.shadowSlider.value) / 100) * 0.95;
+      if (style.shadow && shadowAlpha > 0) {
+        const sh = Math.max(2, fontSize * (0.02 + 0.06 * (Number(els.shadowSlider.value) / 100)));
+        ctx.fillStyle = `rgba(0,0,0,${shadowAlpha.toFixed(2)})`;
         ctx.fillText(txt, curX + sh, curY + sh);
       }
 
@@ -790,14 +972,35 @@ function drawCanvasAtTime(t) {
         ctx.strokeText(txt, curX, curY);
       }
 
-      ctx.fillStyle =
-        isHl && style.mode_type !== "stacked_bg" ? style.accent_color : style.text_color;
+      let wordFill;
+      if (style.mode_type === "karaoke" && activeWordIdx >= 0) {
+        wordFill = i <= activeWordIdx ? style.accent_color : style.text_color;
+      } else {
+        wordFill =
+          isHl && style.mode_type !== "stacked_bg" ? style.accent_color : style.text_color;
+      }
+
+      const glowAmt = els.glowCheck.checked ? Number(els.glowSlider.value) : 0;
+      const applyGlow = glowAmt > 0 && (!els.glowActiveOnlyCheck.checked || isHl);
+      if (applyGlow) {
+        ctx.shadowColor = els.glowMatchActiveCheck.checked
+          ? style.accent_color
+          : els.glowColorPicker.value;
+        ctx.shadowBlur = glowAmt * 1.4;
+      } else {
+        ctx.shadowBlur = 0;
+      }
+
+      ctx.fillStyle = wordFill;
       ctx.fillText(txt, curX, curY);
+      ctx.shadowBlur = 0;
+      ctx.restore();
 
       curX += ww + spacePx;
     });
     curY += lineH + lineGap;
   });
+  ctx.restore();
 }
 
 async function handleSubtitleExport(fmt) {
@@ -853,8 +1056,19 @@ async function handleRenderVideo() {
         v_align: els.vAlignSelect.value,
         h_align: els.hAlignSelect.value,
         font_size: Number(els.fontSizeSlider.value),
+        font_role: els.fontRoleSelect.value !== "default" ? els.fontRoleSelect.value : null,
         offset_x_pct: Number(els.offsetXSlider.value),
         offset_y_pct: Number(els.offsetYSlider.value),
+        text_color: els.textColorPicker.value,
+        accent_color: els.accentColorPicker.value,
+        pill_color: els.pillColorPicker.value,
+        glow_enabled: els.glowCheck.checked,
+        glow_active_only: els.glowActiveOnlyCheck.checked,
+        glow_color: els.glowMatchActiveCheck.checked ? null : els.glowColorPicker.value,
+        glow_match_active: els.glowMatchActiveCheck.checked,
+        glow_intensity: Number(els.glowSlider.value),
+        shadow_enabled: els.shadowCheck.checked,
+        shadow_intensity: Number(els.shadowSlider.value),
       }),
     });
     const data = await res.json();

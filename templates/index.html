@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Auto Captions Studio — Transparent Overlay &amp; Sync Generator</title>
-  <link rel="stylesheet" href="/static/style.css?v=10" />
+  <link rel="stylesheet" href="/static/style.css?v=18" />
 </head>
 <body>
   <header class="topbar">
@@ -50,8 +50,9 @@
           <div class="form-group">
             <label for="engineSelect">Transcription Engine</label>
             <select id="engineSelect">
-              <option value="auto" selected>Auto (Cloudflare AI &rarr; Gemini)</option>
-              <option value="cloudflare">Cloudflare Workers AI Whisper</option>
+              <option value="auto" selected>Auto (CF ElevenLabs &rarr; CF Universal &rarr; Gemini)</option>
+              <option value="cf_elevenlabs">Cloudflare AI (ElevenLabs Token)</option>
+              <option value="cf_universal">Cloudflare AI (Universal 3.5 Pro Token)</option>
               <option value="gemini">Gemini Audio (gemini-3.8-flash)</option>
               <option value="local">Faster-Whisper (Offline Local)</option>
             </select>
@@ -66,6 +67,16 @@
           </div>
         </div>
 
+        <div class="form-group">
+          <label for="languageSelect">Output Language / Script</label>
+          <select id="languageSelect">
+            <option value="hinglish" selected>Hinglish (Written in English Letters)</option>
+            <option value="en">English Only</option>
+            <option value="hi">Hindi (Devanagari)</option>
+            <option value="auto">Auto Detect</option>
+          </select>
+        </div>
+
         <label class="checkbox-row">
           <input type="checkbox" id="useGeminiCheck" checked />
           <span>Use Gemini AI to highlight hook/emphasis words</span>
@@ -77,7 +88,7 @@
 
       <div class="segments-header">
         <h3>Synced Captions (<span id="segCount">0</span>)</h3>
-        <span class="hint">Click a line to preview or edit text</span>
+        <button type="button" id="convertHinglishBtn" class="btn-reset" title="Convert Urdu/Hindi captions to English letters (Hinglish)">Convert to Hinglish</button>
       </div>
       <div id="segmentsList" class="segments-list">
         <div class="empty-state">Upload a voiceover and click Sync, or preview styles on the right.</div>
@@ -163,6 +174,19 @@
         </select>
       </div>
 
+      <div class="form-group">
+        <label for="fontRoleSelect">Font Style</label>
+        <select id="fontRoleSelect">
+          <option value="default" selected>Preset Default</option>
+          <option value="sans_bold">Modern Bold Sans (Segoe / Montserrat)</option>
+          <option value="sans_regular">Clean Regular Sans</option>
+          <option value="condensed">Condensed Impact (Viral Shorts)</option>
+          <option value="serif_bold">Editorial Serif Bold</option>
+          <option value="serif_italic">Editorial Serif Italic</option>
+          <option value="script">Handwritten / Script</option>
+        </select>
+      </div>
+
       <div class="row-2">
         <div class="form-group">
           <label for="vAlignSelect">Vertical Position</label>
@@ -183,19 +207,96 @@
       </div>
 
       <div class="form-group">
-        <label>Font Size: <span id="fontSizeVal">76</span>px</label>
+        <div class="slider-header">
+          <label>Font Size: <span id="fontSizeVal">76</span>px</label>
+          <button type="button" id="resetFontSizeBtn" class="btn-reset" title="Reset Font Size to 76px">Reset</button>
+        </div>
         <input type="range" id="fontSizeSlider" min="36" max="150" value="76" />
       </div>
 
       <div class="row-2">
         <div class="form-group">
-          <label>X Offset: <span id="offsetXVal">0</span>%</label>
+          <div class="slider-header">
+            <label>X Offset: <span id="offsetXVal">0</span>%</label>
+            <button type="button" id="resetOffsetXBtn" class="btn-reset" title="Reset X Offset to 0%">Reset</button>
+          </div>
           <input type="range" id="offsetXSlider" min="-35" max="35" value="0" />
         </div>
         <div class="form-group">
-          <label>Y Offset: <span id="offsetYVal">0</span>%</label>
+          <div class="slider-header">
+            <label>Y Offset: <span id="offsetYVal">0</span>%</label>
+            <button type="button" id="resetOffsetYBtn" class="btn-reset" title="Reset Y Offset to 0%">Reset</button>
+          </div>
           <input type="range" id="offsetYSlider" min="-35" max="35" value="0" />
         </div>
+      </div>
+
+      <!-- COLORS -->
+      <div class="effect-box">
+        <div class="slider-header" style="margin-bottom:8px;">
+          <label style="font-weight:600;color:#cbd5e1;">Colors</label>
+          <button type="button" id="resetColorsBtn" class="btn-reset">Reset Colors</button>
+        </div>
+        <div class="color-grid">
+          <div class="color-item">
+            <span>Text</span>
+            <input type="color" id="textColorPicker" value="#FFFFFF" />
+          </div>
+          <div class="color-item">
+            <span>Active</span>
+            <input type="color" id="accentColorPicker" value="#FFE600" />
+          </div>
+          <div class="color-item">
+            <span>Pill / Box</span>
+            <input type="color" id="pillColorPicker" value="#5B42F3" />
+          </div>
+        </div>
+        <div class="swatch-row" id="quickSwatches" title="Quickly set Active / Highlight color">
+          <button type="button" class="swatch" data-color="#FFFFFF" style="background:#FFFFFF;"></button>
+          <button type="button" class="swatch" data-color="#FFE600" style="background:#FFE600;"></button>
+          <button type="button" class="swatch" data-color="#EF4444" style="background:#EF4444;"></button>
+          <button type="button" class="swatch" data-color="#22C55E" style="background:#22C55E;"></button>
+          <button type="button" class="swatch" data-color="#3B82F6" style="background:#3B82F6;"></button>
+          <button type="button" class="swatch" data-color="#5B42F3" style="background:#5B42F3;"></button>
+          <button type="button" class="swatch" data-color="#EC4899" style="background:#EC4899;"></button>
+          <button type="button" class="swatch" data-color="#000000" style="background:#000000;"></button>
+        </div>
+      </div>
+
+      <!-- GLOW & SHADOW -->
+      <div class="effect-box">
+        <div class="slider-header" style="margin-bottom:6px;">
+          <label class="checkbox-row" style="margin:0;">
+            <input type="checkbox" id="glowCheck" />
+            <span>Glow</span>
+          </label>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <input type="color" id="glowColorPicker" value="#FFE600" title="Custom Glow Color" style="width:24px;height:20px;padding:0;border:none;background:transparent;cursor:pointer;" />
+            <span class="hint"><span id="glowVal">16</span>px</span>
+            <button type="button" id="resetGlowBtn" class="btn-reset" title="Reset Glow">Reset</button>
+          </div>
+        </div>
+        <input type="range" id="glowSlider" min="0" max="40" value="16" style="width:100%;margin-bottom:6px;" />
+        <label class="checkbox-row" style="margin:0 0 4px 0;font-size:11px;color:#9ca3af;">
+          <input type="checkbox" id="glowMatchActiveCheck" checked />
+          <span>Adapt glow color to active word</span>
+        </label>
+        <label class="checkbox-row" style="margin:0 0 10px 0;font-size:11px;color:#9ca3af;">
+          <input type="checkbox" id="glowActiveOnlyCheck" />
+          <span>Glow active word only</span>
+        </label>
+
+        <div class="slider-header" style="margin-bottom:6px;">
+          <label class="checkbox-row" style="margin:0;">
+            <input type="checkbox" id="shadowCheck" checked />
+            <span>Shadow</span>
+          </label>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <span class="hint"><span id="shadowVal">60</span>%</span>
+            <button type="button" id="resetShadowBtn" class="btn-reset" title="Reset Shadow">Reset</button>
+          </div>
+        </div>
+        <input type="range" id="shadowSlider" min="0" max="100" value="60" style="width:100%;" />
       </div>
     </section>
   </main>
@@ -233,6 +334,6 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=15"></script>
+  <script src="/static/app.js?v=24"></script>
 </body>
 </html>
